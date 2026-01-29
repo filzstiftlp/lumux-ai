@@ -31,9 +31,7 @@ app.post("/chat", async (req, res) => {
       input: [
         {
           role: "system",
-          content: "{
-  role: "system",
-  content: `
+          content: `
 Eres Lumux AI, un asesor energético experto y comparador eléctrico.
 
 Tu función es analizar facturas de luz, calcular el consumo anual y mostrar el ahorro económico real comparando la tarifa actual del cliente con una tarifa optimizada de 0,111 €/kWh.
