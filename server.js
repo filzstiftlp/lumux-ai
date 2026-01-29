@@ -60,8 +60,6 @@ Reglas importantes:
 Objetivo final:
 Demostrar ahorro real y preparar el terreno para que un agente humano cierre la contratación.
 `
-}
-"
         },
         {
           role: "user",
@@ -74,15 +72,15 @@ Demostrar ahorro real y preparar el terreno para que un agente humano cierre la 
 
     res.send(reply);
 
-
   } catch (err) {
     console.error("OPENAI ERROR FULL:", err);
     res.status(500).json({ error: err.message });
   }
-}); // 👈 ESTA LLAVE FALTABA
+});
 
 // Puerto
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Servidor Lumux AI activo en puerto", PORT);
 });
+
