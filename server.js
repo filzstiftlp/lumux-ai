@@ -5,6 +5,7 @@ import OpenAI from "openai"
 import axios from "axios"
 import Tesseract from "tesseract.js"
 import { createRequire } from "module"
+import { fromBuffer } from "pdf2pic"
 
 const require = createRequire(import.meta.url)
 const pdfParse = require("pdf-parse").default
@@ -47,22 +48,19 @@ async function readPdfOCR(url){
 
   const response = await axios.get(url,{responseType:"arraybuffer"})
 
-  try{
+  const buffer = Buffer.from(response.data)
 
-    const data = await pdfParse(response.data)
+  const convert = fromBuffer(buffer,{
+    density:300,
+    format:"png",
+    width:1200,
+    height:1600
+  })
 
-    if(data.text && data.text.trim().length > 50){
-      return data.text
-    }
+  const page = await convert(1)
 
-  }catch(e){
-    console.log("pdf-parse falló, usando OCR")
-  }
-
-  // fallback OCR si el PDF no tiene texto
-
-  const { data: { text } } = await Tesseract.recognize(
-    Buffer.from(response.data),
+  const { data:{ text } } = await Tesseract.recognize(
+    page.path,
     "spa"
   )
 
