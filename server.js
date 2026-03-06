@@ -12,6 +12,12 @@ app.get("/", (req, res) => {
   res.send("Lumux AI backend activo 🚀");
 });
 
+app.get("/test", (req, res) => {
+  res.json({
+    reply: "FUNCIONA PERFECTO"
+  });
+});
+
 // Cliente OpenAI
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
