@@ -47,22 +47,30 @@ async function readImageOCR(url){
 async function readPdfOCR(url){
 
   const response = await axios.get(url,{responseType:"arraybuffer"})
-
   const buffer = Buffer.from(response.data)
 
-  const convert = fromBuffer(buffer,{
-    density:300,
-    format:"png",
-    width:1200,
-    height:1600
-  })
+  let text = ""
 
-  const page = await convert(1)
+  try{
 
-  const { data:{ text } } = await Tesseract.recognize(
-    page.path,
-    "spa"
-  )
+    const data = await pdfParse(buffer)
+    text = data.text
+
+  }catch(e){
+    console.log("pdf-parse falló, usando OCR directo")
+  }
+
+  if(!text || text.length < 50){
+
+    console.log("PDF sin texto, aplicando OCR")
+
+    const { data:{ text:ocrText } } = await Tesseract.recognize(
+      buffer,
+      "spa"
+    )
+
+    text = ocrText
+  }
 
   return text
 }
