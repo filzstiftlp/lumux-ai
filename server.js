@@ -70,7 +70,9 @@ Demostrar ahorro real y preparar el terreno para que un agente humano cierre la 
 
     const reply = response.output_text;
 
-    res.send(reply);
+    res.json({
+  reply: reply
+});
 
   } catch (err) {
     console.error("OPENAI ERROR FULL:", err);
