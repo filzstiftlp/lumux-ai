@@ -4,8 +4,7 @@ import cors from "cors"
 import OpenAI from "openai"
 import axios from "axios"
 import Tesseract from "tesseract.js"
-import pdf from "pdf-parse"
-
+import pdfParse from "pdf-parse/lib/pdf-parse.js"
 const app = express()
 app.use(cors())
 app.use(express.json())
@@ -18,7 +17,9 @@ app.get("/", (req,res)=>{
   res.send("Lumux AI backend activo 🚀")
 })
 
+/* -------------------------------- */
 /* OCR PARA IMAGEN */
+/* -------------------------------- */
 
 async function readImageOCR(url){
 
@@ -32,18 +33,22 @@ async function readImageOCR(url){
   return text
 }
 
+/* -------------------------------- */
 /* OCR PARA PDF */
+/* -------------------------------- */
 
 async function readPdfOCR(url){
 
   const response = await axios.get(url,{responseType:"arraybuffer"})
 
-  const data = await pdf(response.data)
+  const data = await pdfParse(response.data)
 
   return data.text
 }
 
+/* -------------------------------- */
 /* EXTRAER DATOS DE FACTURA */
+/* -------------------------------- */
 
 function extractEnergyData(text){
 
@@ -67,7 +72,9 @@ function extractEnergyData(text){
   return {consumo,potencia,precio}
 }
 
+/* -------------------------------- */
 /* CALCULO DE AHORRO */
+/* -------------------------------- */
 
 function calcularAhorro(consumo,precioActual){
 
@@ -81,7 +88,9 @@ function calcularAhorro(consumo,precioActual){
   return {costeLumux,ahorroMensual,ahorroAnual}
 }
 
+/* -------------------------------- */
 /* ENDPOINT PRINCIPAL */
+/* -------------------------------- */
 
 app.post("/chat", async (req,res)=>{
 
@@ -96,6 +105,8 @@ app.post("/chat", async (req,res)=>{
     }
 
     let text = ""
+
+    /* Detectar si es URL (imagen o PDF) */
 
     if(input.startsWith("http")){
 
@@ -112,9 +123,11 @@ app.post("/chat", async (req,res)=>{
       const {consumo,potencia,precio} = extractEnergyData(text)
 
       if(!consumo || !precio){
+
         return res.json({
           reply:"No he podido leer correctamente la factura. ¿Podrías enviar una foto más clara?"
         })
+
       }
 
       const {costeLumux,ahorroMensual,ahorroAnual} = calcularAhorro(consumo,precio)
@@ -140,9 +153,12 @@ El cambio es administrativo y no hay cortes de suministro.
 `
 
       return res.json({reply})
+
     }
 
-    /* fallback IA si envían texto */
+    /* ------------------------------ */
+    /* FALLBACK IA SI ES TEXTO */
+    /* ------------------------------ */
 
     const response = await client.responses.create({
       model:"gpt-4o-mini",
