@@ -4,6 +4,7 @@ import cors from "cors"
 import OpenAI from "openai"
 import axios from "axios"
 import Tesseract from "tesseract.js"
+import pdf from "pdf-parse"
 
 const app = express()
 app.use(cors())
@@ -18,7 +19,7 @@ app.get("/", (req,res)=>{
 })
 
 /* -------------------------------- */
-/* OCR PARA IMAGEN */
+/* OCR IMAGEN */
 /* -------------------------------- */
 
 async function readImageOCR(url){
@@ -34,25 +35,43 @@ async function readImageOCR(url){
 }
 
 /* -------------------------------- */
-/* OCR PARA PDF */
+/* OCR PDF */
 /* -------------------------------- */
 
 async function readPdfOCR(url){
 
   const response = await axios.get(url,{responseType:"arraybuffer"})
-
   const buffer = Buffer.from(response.data)
 
-  const result = await Tesseract.recognize(
-    buffer,
-    "spa"
-  )
+  try{
 
-  return result?.data?.text || ""
+    const data = await pdf(buffer)
+
+    if(data.text && data.text.length > 50){
+      console.log("PDF contiene texto")
+      return data.text
+    }
+
+    console.log("PDF escaneado → OCR")
+
+    const result = await Tesseract.recognize(buffer,"spa")
+
+    return result?.data?.text || ""
+
+  }
+  catch(err){
+
+    console.log("pdf-parse falló → OCR")
+
+    const result = await Tesseract.recognize(buffer,"spa")
+
+    return result?.data?.text || ""
+  }
+
 }
 
 /* -------------------------------- */
-/* EXTRAER DATOS DE FACTURA */
+/* EXTRAER DATOS */
 /* -------------------------------- */
 
 function extractEnergyData(text){
@@ -82,13 +101,8 @@ function extractEnergyData(text){
   const potenciaMatch = text.match(/(\d+[.,]?\d*)\s?kW/i)
 
   const potencia = potenciaMatch
-    ? parseFloat(potenciaMatch[1].replace(",","."))
+    ? parseFloat(potenciaMatch[1].replace(",",".")) 
     : null
-
-
-  /* -------------------------------- */
-  /* DETECTAR TOTAL FACTURA */
-  /* -------------------------------- */
 
   let precio = null
 
@@ -128,7 +142,7 @@ function extractEnergyData(text){
 }
 
 /* -------------------------------- */
-/* CALCULO DE AHORRO */
+/* CALCULO */
 /* -------------------------------- */
 
 function calcularAhorro(consumo,precioActual){
@@ -138,7 +152,6 @@ function calcularAhorro(consumo,precioActual){
   const costeLumux = consumo * precioEnergiaLumux
 
   const ahorroMensual = precioActual - costeLumux
-
   const ahorroAnual = ahorroMensual * 12
 
   return {
@@ -150,7 +163,7 @@ function calcularAhorro(consumo,precioActual){
 }
 
 /* -------------------------------- */
-/* ENDPOINT PRINCIPAL */
+/* ENDPOINT */
 /* -------------------------------- */
 
 app.post("/chat", async (req,res)=>{
@@ -162,11 +175,7 @@ app.post("/chat", async (req,res)=>{
     console.log("INPUT RECIBIDO:",input)
 
     if(!input){
-
-      return res.json({
-        reply:"No he recibido ningún dato."
-      })
-
+      return res.json({reply:"No he recibido ningún dato."})
     }
 
     let text = ""
@@ -176,16 +185,10 @@ app.post("/chat", async (req,res)=>{
       console.log("FACTURA DETECTADA")
 
       if(input.includes(".pdf")){
-
         text = await readPdfOCR(input)
-
-        console.log("OCR RESULTADO PDF:")
-        console.log(text)
-
-      }else{
-
+      }
+      else{
         text = await readImageOCR(input)
-
       }
 
       console.log("TEXTO OCR:",text)
@@ -238,7 +241,6 @@ El cambio es administrativo y no hay cortes de suministro.
     res.json({reply})
 
   }
-
   catch(err){
 
     console.error("ERROR:",err)
@@ -246,7 +248,6 @@ El cambio es administrativo y no hay cortes de suministro.
     res.json({
       reply:"Ha ocurrido un problema analizando la factura."
     })
-
   }
 
 })
