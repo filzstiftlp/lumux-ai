@@ -1,76 +1,172 @@
-import 'dotenv/config';
-import express from "express";
-import cors from "cors";
-import OpenAI from "openai";
+import 'dotenv/config'
+import express from "express"
+import cors from "cors"
+import OpenAI from "openai"
+import axios from "axios"
+import Tesseract from "tesseract.js"
+import pdf from "pdf-parse"
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+const app = express()
+app.use(cors())
+app.use(express.json())
 
-// Ruta raíz
-app.get("/", (req, res) => {
-  res.send("Lumux AI backend activo 🚀");
-});
-
-// Cliente OpenAI
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
-});
+})
 
-// Endpoint /chat
-app.post("/chat", async (req, res) => {
-  try {
-    const userMessage = req.body.message;
+app.get("/", (req,res)=>{
+  res.send("Lumux AI backend activo 🚀")
+})
 
-    if (!userMessage) {
-      return res.status(400).json({ error: "No message provided" });
+/* OCR PARA IMAGEN */
+
+async function readImageOCR(url){
+
+  const response = await axios.get(url,{responseType:"arraybuffer"})
+
+  const {data:{text}} = await Tesseract.recognize(
+    Buffer.from(response.data),
+    "spa"
+  )
+
+  return text
+}
+
+/* OCR PARA PDF */
+
+async function readPdfOCR(url){
+
+  const response = await axios.get(url,{responseType:"arraybuffer"})
+
+  const data = await pdf(response.data)
+
+  return data.text
+}
+
+/* EXTRAER DATOS DE FACTURA */
+
+function extractEnergyData(text){
+
+  let consumo = 0
+
+  const consumos = text.match(/(\d+[,\.]?\d*)\s?kwh/gi)
+
+  if(consumos){
+    consumos.forEach(c=>{
+      const val = parseFloat(c.replace(/[^\d.,]/g,"").replace(",","."))
+      consumo += val
+    })
+  }
+
+  const potenciaMatch = text.match(/(\d+[,\.]?\d*)\s?kW/i)
+  const potencia = potenciaMatch ? parseFloat(potenciaMatch[1].replace(",", ".")) : null
+
+  const precioMatch = text.match(/(\d+[,\.]?\d*)\s?€/i)
+  const precio = precioMatch ? parseFloat(precioMatch[1].replace(",", ".")) : null
+
+  return {consumo,potencia,precio}
+}
+
+/* CALCULO DE AHORRO */
+
+function calcularAhorro(consumo,precioActual){
+
+  const precioEnergiaLumux = 0.111
+
+  const costeLumux = consumo * precioEnergiaLumux
+
+  const ahorroMensual = precioActual - costeLumux
+  const ahorroAnual = ahorroMensual * 12
+
+  return {costeLumux,ahorroMensual,ahorroAnual}
+}
+
+/* ENDPOINT PRINCIPAL */
+
+app.post("/chat", async (req,res)=>{
+
+  try{
+
+    const input = req.body.message
+
+    console.log("INPUT RECIBIDO:",input)
+
+    if(!input){
+      return res.json({reply:"No he recibido ningún dato."})
     }
 
-    const response = await client.responses.create({
-      model: "gpt-4o-mini",
-      input: [
-        {
-  role: "system",
-  content: `
-Eres Lumux AI, un asesor energético experto en ahorro eléctrico.
+    let text = ""
 
-Tu trabajo es:
-- Analizar el consumo en kWh
-- Calcular el coste actual
-- Compararlo con una tarifa optimizada
-- Explicar el ahorro mensual y anual
-- Hablar de forma clara, comercial y cercana
+    if(input.startsWith("http")){
 
-Si el usuario da:
-- kWh
-- precio €/kWh
+      console.log("FACTURA DETECTADA")
 
-Calcula TODO automáticamente.
+      if(input.includes(".pdf")){
+        text = await readPdfOCR(input)
+      }else{
+        text = await readImageOCR(input)
+      }
+
+      console.log("TEXTO OCR:",text)
+
+      const {consumo,potencia,precio} = extractEnergyData(text)
+
+      if(!consumo || !precio){
+        return res.json({
+          reply:"No he podido leer correctamente la factura. ¿Podrías enviar una foto más clara?"
+        })
+      }
+
+      const {costeLumux,ahorroMensual,ahorroAnual} = calcularAhorro(consumo,precio)
+
+      const reply = `
+He analizado tu factura 🔎
+
+Consumo mensual: ${consumo.toFixed(0)} kWh  
+Potencia contratada: ${potencia ?? "no detectada"} kW  
+
+Coste actual aproximado: ${precio.toFixed(2)} €
+
+Con nuestras tarifas pagarías aproximadamente:
+
+${costeLumux.toFixed(2)} €
+
+💰 Ahorro estimado mensual: ${ahorroMensual.toFixed(2)} €  
+💰 Ahorro estimado anual: ${ahorroAnual.toFixed(2)} €
+
+El cambio es administrativo y no hay cortes de suministro.
+
+¿Quieres saber qué compañía puede ofrecerte este precio y aplicar el ahorro?
 `
 
-}
-"
-        },
-        {
-          role: "user",
-          content: userMessage
-        }
-      ]
-    });
+      return res.json({reply})
+    }
 
-    const reply = response.output_text;
+    /* fallback IA si envían texto */
 
-    res.send(reply);
+    const response = await client.responses.create({
+      model:"gpt-4o-mini",
+      input:input
+    })
 
+    const reply = response.output_text
 
-  } catch (err) {
-    console.error("OPENAI ERROR FULL:", err);
-    res.status(500).json({ error: err.message });
+    res.json({reply})
+
+  }catch(err){
+
+    console.error("ERROR:",err)
+
+    res.json({
+      reply:"Ha ocurrido un problema analizando la factura."
+    })
+
   }
-}); // 👈 ESTA LLAVE FALTABA
 
-// Puerto
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("Servidor Lumux AI activo en puerto", PORT);
-});
+})
+
+const PORT = process.env.PORT || 3000
+
+app.listen(PORT,()=>{
+  console.log("Servidor Lumux AI activo en puerto",PORT)
+})
