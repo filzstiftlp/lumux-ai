@@ -51,29 +51,9 @@ async function readPdfOCR(url){
   const response = await axios.get(url,{responseType:"arraybuffer"})
   const buffer = Buffer.from(response.data)
 
-  const loadingTask = pdfjsLib.getDocument({data: buffer})
-  const pdf = await loadingTask.promise
+  const data = await pdfParse(buffer)
 
-  const page = await pdf.getPage(1)
-
-  const viewport = page.getViewport({scale:2})
-
-  const canvas = createCanvas(viewport.width,viewport.height)
-  const context = canvas.getContext("2d")
-
-  await page.render({
-    canvasContext:context,
-    viewport:viewport
-  }).promise
-
-  const imageBuffer = canvas.toBuffer()
-
-  const { data:{ text } } = await Tesseract.recognize(
-    imageBuffer,
-    "spa"
-  )
-
-  return text
+  return data.text
 }
 
 /* -------------------------------- */
