@@ -47,9 +47,26 @@ async function readPdfOCR(url){
 
   const response = await axios.get(url,{responseType:"arraybuffer"})
 
-  const data = await pdfParse(response.data)
+  try{
 
-  return data?.text || ""
+    const data = await pdfParse(response.data)
+
+    if(data.text && data.text.trim().length > 50){
+      return data.text
+    }
+
+  }catch(e){
+    console.log("pdf-parse falló, usando OCR")
+  }
+
+  // fallback OCR si el PDF no tiene texto
+
+  const { data: { text } } = await Tesseract.recognize(
+    Buffer.from(response.data),
+    "eng"
+  )
+
+  return text
 }
 
 /* -------------------------------- */
