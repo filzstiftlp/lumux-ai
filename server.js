@@ -30,9 +30,7 @@ async function readImageOCR(url){
     "spa"
   )
 
-  const text = result?.data?.text || ""
-
-  return text
+  return result?.data?.text || ""
 }
 
 /* -------------------------------- */
@@ -42,15 +40,15 @@ async function readImageOCR(url){
 async function readPdfOCR(url){
 
   const response = await axios.get(url,{responseType:"arraybuffer"})
+
   const buffer = Buffer.from(response.data)
 
-  const pdfParseModule = await import("pdf-parse")
+  const result = await Tesseract.recognize(
+    buffer,
+    "spa"
+  )
 
-  const pdfParse = pdfParseModule.default || pdfParseModule
-
-  const data = await pdfParse(buffer)
-
-  return data.text
+  return result?.data?.text || ""
 }
 
 /* -------------------------------- */
@@ -73,8 +71,6 @@ function extractEnergyData(text){
         c.replace(/[^\d.,]/g,"").replace(",",".")
       )
 
-      /* evitar lecturas absurdas del contador */
-
       if(!isNaN(val) && val < 2000){
         consumo += val
       }
@@ -86,7 +82,7 @@ function extractEnergyData(text){
   const potenciaMatch = text.match(/(\d+[.,]?\d*)\s?kW/i)
 
   const potencia = potenciaMatch
-    ? parseFloat(potenciaMatch[1].replace(",",".")) 
+    ? parseFloat(potenciaMatch[1].replace(",","."))
     : null
 
 
@@ -129,7 +125,6 @@ function extractEnergyData(text){
   }
 
   return {consumo,potencia,precio}
-
 }
 
 /* -------------------------------- */
@@ -231,7 +226,6 @@ El cambio es administrativo y no hay cortes de suministro.
 `
 
       return res.json({reply})
-
     }
 
     const response = await client.responses.create({
@@ -260,7 +254,5 @@ El cambio es administrativo y no hay cortes de suministro.
 const PORT = process.env.PORT || 3000
 
 app.listen(PORT,()=>{
-
   console.log("Servidor Lumux AI activo en puerto",PORT)
-
 })
