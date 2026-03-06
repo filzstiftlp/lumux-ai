@@ -6,8 +6,6 @@ import axios from "axios"
 import Tesseract from "tesseract.js"
 import { createRequire } from "module"
 import { fromBuffer } from "pdf2pic"
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.js"
-import { createCanvas } from "canvas"
 
 const require = createRequire(import.meta.url)
 const pdfParse = require("pdf-parse").default
