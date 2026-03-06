@@ -5,10 +5,9 @@ import OpenAI from "openai"
 import axios from "axios"
 import Tesseract from "tesseract.js"
 import { createRequire } from "module"
-import { fromBuffer } from "pdf2pic"
 
 const require = createRequire(import.meta.url)
-const pdfParse = require("pdf-parse").default
+const pdfParse = require("pdf-parse")
 
 const app = express()
 app.use(cors())
