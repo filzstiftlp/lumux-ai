@@ -31,7 +31,7 @@ async function readImageOCR(url){
 
   const result = await Tesseract.recognize(
     Buffer.from(response.data),
-    "eng"
+    "spa"
   )
 
   const text = result?.data?.text || ""
@@ -63,7 +63,7 @@ async function readPdfOCR(url){
 
   const { data: { text } } = await Tesseract.recognize(
     Buffer.from(response.data),
-    "eng"
+    "spa"
   )
 
   return text
@@ -170,7 +170,8 @@ app.post("/chat", async (req,res)=>{
       if(input.includes(".pdf")){
 
         text = await readPdfOCR(input)
-
+console.log("OCR RESULTADO:")
+console.log(text)
       }else{
 
         text = await readImageOCR(input)
