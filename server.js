@@ -30,10 +30,8 @@ app.post("/chat", async (req, res) => {
       model: "gpt-4o-mini",
       input: [
         {
-          role: "system",
-          content: "{
   role: "system",
-  content: `content: `
+  content: `
 Eres Lumux AI, un asesor energético experto en ahorro eléctrico.
 
 Tu trabajo es:
