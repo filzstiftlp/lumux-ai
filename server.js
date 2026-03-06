@@ -5,7 +5,6 @@ import OpenAI from "openai"
 import axios from "axios"
 import Tesseract from "tesseract.js"
 
-
 const app = express()
 app.use(cors())
 app.use(express.json())
@@ -66,24 +65,33 @@ function extractEnergyData(text){
   const consumos = text.match(/(\d+[,\.]?\d*)\s?kwh/gi)
 
   if(consumos){
+
     consumos.forEach(c=>{
+
       const val = parseFloat(
         c.replace(/[^\d.,]/g,"").replace(",",".")
       )
 
-      if(!isNaN(val)){
+      /* evitar lecturas absurdas del contador */
+      if(!isNaN(val) && val < 2000){
         consumo += val
       }
+
     })
+
   }
 
-  const potenciaMatch = text.match(/(\d+[,\.]?\d*)\s?kW/i)
+  const potenciaMatch = text.match(/(\d+[.,]?\d*)\s?kW/i)
 
   const potencia = potenciaMatch
     ? parseFloat(potenciaMatch[1].replace(",","."))
     : null
 
-  const precios = text.match(/(\d+[,\.]\d{2})\s?€/g)
+  /* -------------------------------- */
+  /* DETECTAR PRECIO FACTURA */
+  /* -------------------------------- */
+
+  const precios = text.match(/(\d+[.,]?\d*)\s?€/g)
 
   let precio = null
 
@@ -91,8 +99,16 @@ function extractEnergyData(text){
 
     const ultimo = precios[precios.length - 1]
 
+    let valor = ultimo.replace(/[^\d.,]/g,"")
+
+    /* arreglar números OCR tipo 3237 -> 32.37 */
+
+    if(!valor.includes(",") && !valor.includes(".") && valor.length > 2){
+      valor = valor.slice(0,-2) + "." + valor.slice(-2)
+    }
+
     precio = parseFloat(
-      ultimo.replace(/[^\d.,]/g,"").replace(",",".")
+      valor.replace(",",".")
     )
 
   }
@@ -154,8 +170,10 @@ app.post("/chat", async (req,res)=>{
       if(input.includes(".pdf")){
 
         text = await readPdfOCR(input)
-console.log("OCR RESULTADO:")
-console.log(text)
+
+        console.log("OCR RESULTADO PDF:")
+        console.log(text)
+
       }else{
 
         text = await readImageOCR(input)
@@ -165,6 +183,8 @@ console.log(text)
       console.log("TEXTO OCR:",text)
 
       const {consumo,potencia,precio} = extractEnergyData(text)
+
+      console.log("DATOS EXTRAIDOS:",{consumo,potencia,precio})
 
       if(!consumo || !precio){
 
@@ -203,7 +223,7 @@ El cambio es administrativo y no hay cortes de suministro.
 
     /* ------------------------------ */
     /* FALLBACK IA SI ES TEXTO */
-/* ------------------------------ */
+    /* ------------------------------ */
 
     const response = await client.responses.create({
       model:"gpt-4o-mini",
