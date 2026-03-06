@@ -1,108 +1,189 @@
-import 'dotenv/config';
-import express from "express";
-import cors from "cors";
-import OpenAI from "openai";
+import 'dotenv/config'
+import express from "express"
+import cors from "cors"
+import OpenAI from "openai"
+import axios from "axios"
+import Tesseract from "tesseract.js"
+import pdf from "pdf-parse"
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+const app = express()
+app.use(cors())
+app.use(express.json())
 
-// Ruta raíz
-app.get("/", (req, res) => {
-  res.send("Lumux AI backend activo 🚀");
-});
-
-app.get("/test", (req, res) => {
-  res.json({
-    reply: "FUNCIONA PERFECTO"
-  });
-});
-
-// Cliente OpenAI
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
-});
+})
 
-// Endpoint /chat
-app.post("/chat", async (req, res) => {
-  try {
+app.get("/", (req,res)=>{
+  res.send("Lumux AI backend activo 🚀")
+})
 
-    const userMessage = req.body.message;
+/* -------------------------------- */
+/* OCR PARA IMAGEN */
+/* -------------------------------- */
 
-    console.log("MENSAJE RECIBIDO:", userMessage);
+async function readImageOCR(url){
 
-    if (!userMessage) {
-      return res.status(400).json({ error: "No message provided" });
+  const response = await axios.get(url,{responseType:"arraybuffer"})
+
+  const {data:{text}} = await Tesseract.recognize(
+    Buffer.from(response.data),
+    "spa"
+  )
+
+  return text
+}
+
+/* -------------------------------- */
+/* OCR PARA PDF */
+/* -------------------------------- */
+
+async function readPdfOCR(url){
+
+  const response = await axios.get(url,{responseType:"arraybuffer"})
+
+  const data = await pdf(response.data)
+
+  return data.text
+}
+
+/* -------------------------------- */
+/* EXTRAER DATOS DE FACTURA */
+/* -------------------------------- */
+
+function extractEnergyData(text){
+
+  let consumo = 0
+
+  const consumos = text.match(/(\d+[,\.]?\d*)\s?kwh/gi)
+
+  if(consumos){
+    consumos.forEach(c=>{
+      const val = parseFloat(c.replace(/[^\d.,]/g,"").replace(",","."))
+      consumo += val
+    })
+  }
+
+  const potenciaMatch = text.match(/(\d+[,\.]?\d*)\s?kW/i)
+  const potencia = potenciaMatch ? parseFloat(potenciaMatch[1].replace(",", ".")) : null
+
+  const precioMatch = text.match(/(\d+[,\.]?\d*)\s?€/i)
+  const precio = precioMatch ? parseFloat(precioMatch[1].replace(",", ".")) : null
+
+  return {consumo,potencia,precio}
+}
+
+/* -------------------------------- */
+/* CALCULO DE AHORRO */
+/* -------------------------------- */
+
+function calcularAhorro(consumo,precioActual){
+
+  const precioEnergiaLumux = 0.111
+
+  const costeLumux = consumo * precioEnergiaLumux
+
+  const ahorroMensual = precioActual - costeLumux
+  const ahorroAnual = ahorroMensual * 12
+
+  return {costeLumux,ahorroMensual,ahorroAnual}
+}
+
+/* -------------------------------- */
+/* ENDPOINT PRINCIPAL */
+/* -------------------------------- */
+
+app.post("/chat", async (req,res)=>{
+
+  try{
+
+    const input = req.body.message
+
+    console.log("INPUT RECIBIDO:",input)
+
+    if(!input){
+      return res.json({reply:"No he recibido ningún dato."})
     }
+
+    let text = ""
+
+    /* Detectar si es URL (imagen o PDF) */
+
+    if(input.startsWith("http")){
+
+      console.log("FACTURA DETECTADA")
+
+      if(input.includes(".pdf")){
+        text = await readPdfOCR(input)
+      }else{
+        text = await readImageOCR(input)
+      }
+
+      console.log("TEXTO OCR:",text)
+
+      const {consumo,potencia,precio} = extractEnergyData(text)
+
+      if(!consumo || !precio){
+
+        return res.json({
+          reply:"No he podido leer correctamente la factura. ¿Podrías enviar una foto más clara?"
+        })
+
+      }
+
+      const {costeLumux,ahorroMensual,ahorroAnual} = calcularAhorro(consumo,precio)
+
+      const reply = `
+He analizado tu factura 🔎
+
+Consumo mensual: ${consumo.toFixed(0)} kWh  
+Potencia contratada: ${potencia ?? "no detectada"} kW  
+
+Coste actual aproximado: ${precio.toFixed(2)} €
+
+Con nuestras tarifas pagarías aproximadamente:
+
+${costeLumux.toFixed(2)} €
+
+💰 Ahorro estimado mensual: ${ahorroMensual.toFixed(2)} €  
+💰 Ahorro estimado anual: ${ahorroAnual.toFixed(2)} €
+
+El cambio es administrativo y no hay cortes de suministro.
+
+¿Quieres saber qué compañía puede ofrecerte este precio y aplicar el ahorro?
+`
+
+      return res.json({reply})
+
+    }
+
+    /* ------------------------------ */
+    /* FALLBACK IA SI ES TEXTO */
+    /* ------------------------------ */
 
     const response = await client.responses.create({
-      model: "gpt-4o-mini",
-      input: [
-        {
-          role: "system",
-<<<<<<< HEAD
-          content: `
-Eres Lumux AI, un asesor energético experto y comparador eléctrico.
-=======
-          content: "{
-  role: "system",
-  content: `content: `
-Eres Lumux AI, un asesor energético experto en ahorro eléctrico.
->>>>>>> 0487206 (Fix system prompt syntax and multiline string)
+      model:"gpt-4o-mini",
+      input:input
+    })
 
-Tu trabajo es:
-- Analizar el consumo en kWh
-- Calcular el coste actual
-- Compararlo con una tarifa optimizada
-- Explicar el ahorro mensual y anual
-- Hablar de forma clara, comercial y cercana
+    const reply = response.output_text
 
-Si el usuario da:
-- kWh
-- precio €/kWh
+    res.json({reply})
 
-Calcula TODO automáticamente.
-`
-<<<<<<< HEAD
-=======
+  }catch(err){
 
-}
-"
->>>>>>> 0487206 (Fix system prompt syntax and multiline string)
-        },
-        {
-          role: "user",
-          content: userMessage
-        }
-      ]
-    });
-
-    console.log("OPENAI RESPONSE:", JSON.stringify(response, null, 2));
-
-    let reply = "";
-
-    if (response.output_text) {
-      reply = response.output_text;
-    } else if (response.output) {
-      reply = response.output
-        .map(o => o.content?.map(c => c.text).join(""))
-        .join("");
-    }
-
-    console.log("RESPUESTA FINAL:", reply);
+    console.error("ERROR:",err)
 
     res.json({
-      reply: reply
-    });
+      reply:"Ha ocurrido un problema analizando la factura."
+    })
 
-  } catch (err) {
-    console.error("OPENAI ERROR FULL:", err);
-    res.status(500).json({ error: err.message });
   }
-});
 
-// Puerto
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("Servidor Lumux AI activo en puerto", PORT);
-});
+})
+
+const PORT = process.env.PORT || 3000
+
+app.listen(PORT,()=>{
+  console.log("Servidor Lumux AI activo en puerto",PORT)
+})
