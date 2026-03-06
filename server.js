@@ -29,10 +29,12 @@ async function readImageOCR(url){
 
   const response = await axios.get(url,{responseType:"arraybuffer"})
 
-  const { data: { text } } = await Tesseract.recognize(
+  const result = await Tesseract.recognize(
     Buffer.from(response.data),
     "eng"
   )
+
+  const text = result?.data?.text || ""
 
   return text
 }
@@ -47,7 +49,7 @@ async function readPdfOCR(url){
 
   const data = await pdfParse(response.data)
 
-  return data.text
+  return data?.text || ""
 }
 
 /* -------------------------------- */
@@ -56,13 +58,17 @@ async function readPdfOCR(url){
 
 function extractEnergyData(text){
 
+  if(!text) return {consumo:null,potencia:null,precio:null}
+
   let consumo = 0
 
   const consumos = text.match(/(\d+[,\.]?\d*)\s?kwh/gi)
 
   if(consumos){
     consumos.forEach(c=>{
-      const val = parseFloat(c.replace(/[^\d.,]/g,"").replace(",","."))
+      const val = parseFloat(
+        c.replace(/[^\d.,]/g,"").replace(",",".")
+      )
 
       if(!isNaN(val)){
         consumo += val
@@ -73,7 +79,7 @@ function extractEnergyData(text){
   const potenciaMatch = text.match(/(\d+[,\.]?\d*)\s?kW/i)
 
   const potencia = potenciaMatch
-    ? parseFloat(potenciaMatch[1].replace(",", "."))
+    ? parseFloat(potenciaMatch[1].replace(",","."))
     : null
 
   const precios = text.match(/(\d+[,\.]\d{2})\s?€/g)
@@ -81,14 +87,17 @@ function extractEnergyData(text){
   let precio = null
 
   if(precios){
+
     const ultimo = precios[precios.length - 1]
 
     precio = parseFloat(
       ultimo.replace(/[^\d.,]/g,"").replace(",",".")
     )
+
   }
 
   return {consumo,potencia,precio}
+
 }
 
 /* -------------------------------- */
@@ -102,9 +111,15 @@ function calcularAhorro(consumo,precioActual){
   const costeLumux = consumo * precioEnergiaLumux
 
   const ahorroMensual = precioActual - costeLumux
+
   const ahorroAnual = ahorroMensual * 12
 
-  return {costeLumux,ahorroMensual,ahorroAnual}
+  return {
+    costeLumux,
+    ahorroMensual,
+    ahorroAnual
+  }
+
 }
 
 /* -------------------------------- */
@@ -120,21 +135,29 @@ app.post("/chat", async (req,res)=>{
     console.log("INPUT RECIBIDO:",input)
 
     if(!input){
-      return res.json({reply:"No he recibido ningún dato."})
+
+      return res.json({
+        reply:"No he recibido ningún dato."
+      })
+
     }
 
     let text = ""
 
-    /* Detectar si es URL (imagen o PDF) */
+    /* Detectar si es URL */
 
-    if(input.startsWith("http")){
+    if(typeof input === "string" && input.startsWith("http")){
 
       console.log("FACTURA DETECTADA")
 
       if(input.includes(".pdf")){
+
         text = await readPdfOCR(input)
+
       }else{
+
         text = await readImageOCR(input)
+
       }
 
       console.log("TEXTO OCR:",text)
@@ -149,7 +172,8 @@ app.post("/chat", async (req,res)=>{
 
       }
 
-      const {costeLumux,ahorroMensual,ahorroAnual} = calcularAhorro(consumo,precio)
+      const {costeLumux,ahorroMensual,ahorroAnual} =
+        calcularAhorro(consumo,precio)
 
       const reply = `
 He analizado tu factura 🔎
@@ -177,7 +201,7 @@ El cambio es administrativo y no hay cortes de suministro.
 
     /* ------------------------------ */
     /* FALLBACK IA SI ES TEXTO */
-    /* ------------------------------ */
+/* ------------------------------ */
 
     const response = await client.responses.create({
       model:"gpt-4o-mini",
@@ -188,7 +212,9 @@ El cambio es administrativo y no hay cortes de suministro.
 
     res.json({reply})
 
-  }catch(err){
+  }
+
+  catch(err){
 
     console.error("ERROR:",err)
 
@@ -203,5 +229,7 @@ El cambio es administrativo y no hay cortes de suministro.
 const PORT = process.env.PORT || 3000
 
 app.listen(PORT,()=>{
+
   console.log("Servidor Lumux AI activo en puerto",PORT)
+
 })
