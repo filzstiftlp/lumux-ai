@@ -45,7 +45,8 @@ async function readPdfOCR(url){
   const buffer = Buffer.from(response.data)
 
   const pdfParseModule = await import("pdf-parse")
-  const pdfParse = pdfParseModule.default
+
+  const pdfParse = pdfParseModule.default || pdfParseModule
 
   const data = await pdfParse(buffer)
 
@@ -73,6 +74,7 @@ function extractEnergyData(text){
       )
 
       /* evitar lecturas absurdas del contador */
+
       if(!isNaN(val) && val < 2000){
         consumo += val
       }
@@ -84,32 +86,45 @@ function extractEnergyData(text){
   const potenciaMatch = text.match(/(\d+[.,]?\d*)\s?kW/i)
 
   const potencia = potenciaMatch
-    ? parseFloat(potenciaMatch[1].replace(",","."))
+    ? parseFloat(potenciaMatch[1].replace(",",".")) 
     : null
 
-  /* -------------------------------- */
-  /* DETECTAR PRECIO FACTURA */
-  /* -------------------------------- */
 
-  const precios = text.match(/(\d+[.,]?\d*)\s?€/g)
+  /* -------------------------------- */
+  /* DETECTAR TOTAL FACTURA */
+  /* -------------------------------- */
 
   let precio = null
 
-  if(precios){
+  const totalMatch = text.match(/total\s*a\s*pagar[^0-9]*(\d+[.,]?\d*)/i)
 
-    const ultimo = precios[precios.length - 1]
+  if(totalMatch){
 
-    let valor = ultimo.replace(/[^\d.,]/g,"")
-
-    /* arreglar números OCR tipo 3237 -> 32.37 */
+    let valor = totalMatch[1]
 
     if(!valor.includes(",") && !valor.includes(".") && valor.length > 2){
       valor = valor.slice(0,-2) + "." + valor.slice(-2)
     }
 
-    precio = parseFloat(
-      valor.replace(",",".")
-    )
+    precio = parseFloat(valor.replace(",","."))
+  }
+
+  else{
+
+    const precios = text.match(/(\d+[.,]?\d*)\s?€/g)
+
+    if(precios){
+
+      const ultimo = precios[precios.length - 1]
+
+      let valor = ultimo.replace(/[^\d.,]/g,"")
+
+      if(!valor.includes(",") && !valor.includes(".") && valor.length > 2){
+        valor = valor.slice(0,-2) + "." + valor.slice(-2)
+      }
+
+      precio = parseFloat(valor.replace(",","."))
+    }
 
   }
 
@@ -160,8 +175,6 @@ app.post("/chat", async (req,res)=>{
     }
 
     let text = ""
-
-    /* Detectar si es URL */
 
     if(typeof input === "string" && input.startsWith("http")){
 
@@ -220,10 +233,6 @@ El cambio es administrativo y no hay cortes de suministro.
       return res.json({reply})
 
     }
-
-    /* ------------------------------ */
-    /* FALLBACK IA SI ES TEXTO */
-    /* ------------------------------ */
 
     const response = await client.responses.create({
       model:"gpt-4o-mini",
