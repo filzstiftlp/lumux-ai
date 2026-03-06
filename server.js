@@ -4,7 +4,7 @@ import cors from "cors"
 import OpenAI from "openai"
 import axios from "axios"
 import Tesseract from "tesseract.js"
-import pdfParse from "pdf-parse/lib/pdf-parse.js"
+import pdfParse from "pdf-parse"
 const app = express()
 app.use(cors())
 app.use(express.json())
@@ -25,10 +25,10 @@ async function readImageOCR(url){
 
   const response = await axios.get(url,{responseType:"arraybuffer"})
 
-  const {data:{text}} = await Tesseract.recognize(
-    Buffer.from(response.data),
-    "spa"
-  )
+  const { data: { text } } = await Tesseract.recognize(
+  Buffer.from(response.data),
+  "eng"
+)
 
   return text
 }
@@ -66,7 +66,14 @@ function extractEnergyData(text){
   const potenciaMatch = text.match(/(\d+[,\.]?\d*)\s?kW/i)
   const potencia = potenciaMatch ? parseFloat(potenciaMatch[1].replace(",", ".")) : null
 
-  const precioMatch = text.match(/(\d+[,\.]?\d*)\s?€/i)
+  const precios = text.match(/(\d+[,\.]\d{2})\s?€/g)
+
+let precio = null
+
+if(precios){
+  const ultimo = precios[precios.length - 1]
+  precio = parseFloat(ultimo.replace(/[^\d.,]/g,"").replace(",","."))
+}
   const precio = precioMatch ? parseFloat(precioMatch[1].replace(",", ".")) : null
 
   return {consumo,potencia,precio}
