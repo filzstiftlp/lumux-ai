@@ -7,7 +7,7 @@ import Tesseract from "tesseract.js"
 import { createRequire } from "module"
 
 const require = createRequire(import.meta.url)
-const pdfParse = require("pdf-parse")
+const pdfParse = require("pdf-parse/lib/pdf-parse.js")
 
 const app = express()
 app.use(cors())
