@@ -4,7 +4,10 @@ import cors from "cors"
 import OpenAI from "openai"
 import axios from "axios"
 import Tesseract from "tesseract.js"
-import pdf from "pdf-parse"
+import { createRequire } from "module"
+
+const require = createRequire(import.meta.url)
+const pdfParse = require("pdf-parse")
 
 const app = express()
 app.use(cors())
@@ -45,7 +48,7 @@ async function readPdfOCR(url){
 
   try{
 
-    const data = await pdf(buffer)
+    const data = await pdfParse(buffer)
 
     if(data.text && data.text.length > 50){
       console.log("PDF contiene texto")
@@ -58,8 +61,7 @@ async function readPdfOCR(url){
 
     return result?.data?.text || ""
 
-  }
-  catch(err){
+  }catch(err){
 
     console.log("pdf-parse falló → OCR")
 
@@ -67,7 +69,6 @@ async function readPdfOCR(url){
 
     return result?.data?.text || ""
   }
-
 }
 
 /* -------------------------------- */
@@ -101,7 +102,7 @@ function extractEnergyData(text){
   const potenciaMatch = text.match(/(\d+[.,]?\d*)\s?kW/i)
 
   const potencia = potenciaMatch
-    ? parseFloat(potenciaMatch[1].replace(",",".")) 
+    ? parseFloat(potenciaMatch[1].replace(",","."))
     : null
 
   let precio = null
@@ -142,7 +143,7 @@ function extractEnergyData(text){
 }
 
 /* -------------------------------- */
-/* CALCULO */
+/* CALCULO AHORRO */
 /* -------------------------------- */
 
 function calcularAhorro(consumo,precioActual){
@@ -159,7 +160,6 @@ function calcularAhorro(consumo,precioActual){
     ahorroMensual,
     ahorroAnual
   }
-
 }
 
 /* -------------------------------- */
@@ -202,7 +202,6 @@ app.post("/chat", async (req,res)=>{
         return res.json({
           reply:"No he podido leer correctamente la factura. ¿Podrías enviar una foto más clara?"
         })
-
       }
 
       const {costeLumux,ahorroMensual,ahorroAnual} =
@@ -240,8 +239,7 @@ El cambio es administrativo y no hay cortes de suministro.
 
     res.json({reply})
 
-  }
-  catch(err){
+  }catch(err){
 
     console.error("ERROR:",err)
 
@@ -249,7 +247,6 @@ El cambio es administrativo y no hay cortes de suministro.
       reply:"Ha ocurrido un problema analizando la factura."
     })
   }
-
 })
 
 const PORT = process.env.PORT || 3000
