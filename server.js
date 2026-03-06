@@ -20,7 +20,10 @@ const client = new OpenAI({
 // Endpoint /chat
 app.post("/chat", async (req, res) => {
   try {
+
     const userMessage = req.body.message;
+
+    console.log("MENSAJE RECIBIDO:", userMessage);
 
     if (!userMessage) {
       return res.status(400).json({ error: "No message provided" });
@@ -67,12 +70,24 @@ Demostrar ahorro real y preparar el terreno para que un agente humano cierre la 
         }
       ]
     });
-console.log("OPENAI RESPONSE:", JSON.stringify(response, null, 2));
-    const reply = response.output_text || response.output[0].content[0].text;
+
+    console.log("OPENAI RESPONSE:", JSON.stringify(response, null, 2));
+
+    let reply = "";
+
+    if (response.output_text) {
+      reply = response.output_text;
+    } else if (response.output) {
+      reply = response.output
+        .map(o => o.content?.map(c => c.text).join(""))
+        .join("");
+    }
+
+    console.log("RESPUESTA FINAL:", reply);
 
     res.json({
-  reply: reply
-});
+      reply: reply
+    });
 
   } catch (err) {
     console.error("OPENAI ERROR FULL:", err);
@@ -85,4 +100,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Servidor Lumux AI activo en puerto", PORT);
 });
-
