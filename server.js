@@ -4,7 +4,9 @@ import cors from "cors"
 import OpenAI from "openai"
 import axios from "axios"
 import Tesseract from "tesseract.js"
-import pdfParse from "pdf-parse"
+import { createRequire } from "module"
+const require = createRequire(import.meta.url)
+const pdfParse = require("pdf-parse")
 const app = express()
 app.use(cors())
 app.use(express.json())
