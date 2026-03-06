@@ -68,7 +68,7 @@ Demostrar ahorro real y preparar el terreno para que un agente humano cierre la 
       ]
     });
 
-    const reply = response.output_text;
+    const reply = response.output_text || response.output[0].content[0].text;
 
     res.json({
   reply: reply
