@@ -5,8 +5,10 @@ import OpenAI from "openai"
 import axios from "axios"
 import Tesseract from "tesseract.js"
 import { createRequire } from "module"
+
 const require = createRequire(import.meta.url)
 const pdfParse = require("pdf-parse")
+
 const app = express()
 app.use(cors())
 app.use(express.json())
@@ -28,9 +30,9 @@ async function readImageOCR(url){
   const response = await axios.get(url,{responseType:"arraybuffer"})
 
   const { data: { text } } = await Tesseract.recognize(
-  Buffer.from(response.data),
-  "eng"
-)
+    Buffer.from(response.data),
+    "eng"
+  )
 
   return text
 }
@@ -61,22 +63,30 @@ function extractEnergyData(text){
   if(consumos){
     consumos.forEach(c=>{
       const val = parseFloat(c.replace(/[^\d.,]/g,"").replace(",","."))
-      consumo += val
+
+      if(!isNaN(val)){
+        consumo += val
+      }
     })
   }
 
   const potenciaMatch = text.match(/(\d+[,\.]?\d*)\s?kW/i)
-  const potencia = potenciaMatch ? parseFloat(potenciaMatch[1].replace(",", ".")) : null
+
+  const potencia = potenciaMatch
+    ? parseFloat(potenciaMatch[1].replace(",", "."))
+    : null
 
   const precios = text.match(/(\d+[,\.]\d{2})\s?€/g)
 
-let precio = null
+  let precio = null
 
-if(precios){
-  const ultimo = precios[precios.length - 1]
-  precio = parseFloat(ultimo.replace(/[^\d.,]/g,"").replace(",","."))
-}
-  const precio = precioMatch ? parseFloat(precioMatch[1].replace(",", ".")) : null
+  if(precios){
+    const ultimo = precios[precios.length - 1]
+
+    precio = parseFloat(
+      ultimo.replace(/[^\d.,]/g,"").replace(",",".")
+    )
+  }
 
   return {consumo,potencia,precio}
 }
