@@ -4,10 +4,7 @@ import cors from "cors"
 import OpenAI from "openai"
 import axios from "axios"
 import Tesseract from "tesseract.js"
-import { createRequire } from "module"
 
-const require = createRequire(import.meta.url)
-const pdfParse = require("pdf-parse/lib/pdf-parse.js")
 
 const app = express()
 app.use(cors())
@@ -47,6 +44,9 @@ async function readPdfOCR(url){
 
   const response = await axios.get(url,{responseType:"arraybuffer"})
   const buffer = Buffer.from(response.data)
+
+  const pdfParseModule = await import("pdf-parse")
+  const pdfParse = pdfParseModule.default
 
   const data = await pdfParse(buffer)
 
