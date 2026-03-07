@@ -7,6 +7,7 @@ import Tesseract from "tesseract.js"
 import { createRequire } from "module"
 
 const require = createRequire(import.meta.url)
+
 const pdfParseLib = require("pdf-parse")
 const pdfParse = pdfParseLib.default || pdfParseLib
 
@@ -28,14 +29,23 @@ app.get("/", (req,res)=>{
 
 async function readImageOCR(url){
 
-  const response = await axios.get(url,{responseType:"arraybuffer"})
+  try{
 
-  const result = await Tesseract.recognize(
-    Buffer.from(response.data),
-    "spa"
-  )
+    const response = await axios.get(url,{responseType:"arraybuffer"})
 
-  return result?.data?.text || ""
+    const result = await Tesseract.recognize(
+      Buffer.from(response.data),
+      "spa"
+    )
+
+    return result?.data?.text || ""
+
+  }catch(err){
+
+    console.log("Error OCR imagen:",err.message)
+    return ""
+
+  }
 }
 
 /* -------------------------------- */
@@ -44,25 +54,29 @@ async function readImageOCR(url){
 
 async function readPdfOCR(url){
 
-  const response = await axios.get(url,{responseType:"arraybuffer"})
-  const buffer = Buffer.from(response.data)
-
   try{
+
+    const response = await axios.get(url,{responseType:"arraybuffer"})
+    const buffer = Buffer.from(response.data)
 
     const data = await pdfParse(buffer)
 
-    if(data.text && data.text.length > 20){
+    if(data?.text && data.text.length > 20){
+
       console.log("PDF contiene texto")
       return data.text
+
     }
 
-    console.log("PDF sin texto suficiente")
+    console.log("PDF sin texto útil")
+
     return ""
 
   }catch(err){
 
     console.log("Error leyendo PDF:", err.message)
     return ""
+
   }
 }
 
@@ -181,26 +195,31 @@ app.post("/chat", async (req,res)=>{
 
       if(input.includes(".pdf")){
         text = await readPdfOCR(input)
-      }else{
+      }
+      else{
         text = await readImageOCR(input)
       }
 
-      console.log("TEXTO OCR:", text)
+      console.log("TEXTO OCR:",text)
 
       if(!text || text.length < 20){
+
         return res.json({
           reply:"No he podido leer correctamente la factura. ¿Podrías enviar una foto más clara?"
         })
+
       }
 
       const {consumo,potencia,precio} = extractEnergyData(text)
 
-      console.log("DATOS EXTRAIDOS:", {consumo,potencia,precio})
+      console.log("DATOS EXTRAIDOS:",{consumo,potencia,precio})
 
       if(!consumo || !precio || isNaN(consumo) || isNaN(precio)){
+
         return res.json({
           reply:"No he podido leer correctamente la factura. ¿Podrías enviar una foto más clara?"
         })
+
       }
 
       const {costeLumux,ahorroMensual,ahorroAnual} =
@@ -227,6 +246,7 @@ El cambio es administrativo y no hay cortes de suministro.
 `
 
       return res.json({reply})
+
     }
 
     const response = await client.responses.create({
@@ -238,14 +258,18 @@ El cambio es administrativo y no hay cortes de suministro.
 
     return res.json({reply})
 
-  }catch(err){
+  }
 
-    console.error("ERROR:", err)
+  catch(err){
+
+    console.error("ERROR:",err)
 
     return res.json({
       reply:"Ha ocurrido un problema analizando la factura."
     })
+
   }
+
 })
 
 const PORT = process.env.PORT || 3000
