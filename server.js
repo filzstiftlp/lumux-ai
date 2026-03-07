@@ -50,7 +50,7 @@ async function readImageOCR(url){
 }
 
 /* -------------------------------- */
-/* OCR PDF (CONVERSIÓN A IMAGEN) */
+/* OCR PDF */
 /* -------------------------------- */
 
 async function readPdfOCR(url){
@@ -102,71 +102,75 @@ async function readPdfOCR(url){
 
 function extractEnergyData(text){
 
-  if(!text) return {consumo:null,potencia:null,precio:null}
+  if(!text) return {consumo:null,potencia:null,precio:null,dias:null,nombre:null,direccion:null}
 
-  let consumo = 0
-
-  const consumos = text.match(/(\d+[.,]?\d*)\s?kwh/gi)
-
-  if(consumos){
-
-    consumos.forEach(c=>{
-
-      const val = parseFloat(
-        c.replace(/[^\d.,]/g,"").replace(",",".")
-      )
-
-      if(!isNaN(val) && val < 2000){
-        consumo += val
-      }
-
-    })
-
+  const cleanNumber = (n)=>{
+    return parseFloat(
+      n.replace(/\./g,"").replace(",",".")
+    )
   }
 
-  const potenciaMatch = text.match(/(\d+[.,]?\d*)\s?kW/i)
+  /* CONSUMO */
 
-  const potencia = potenciaMatch
-    ? parseFloat(potenciaMatch[1].replace(",","."))
-    : null
+  let consumo=null
 
-  let precio = null
+  const consumoMatch = text.match(/([\d.,]+)\s*kwh/i)
 
-  const totalMatch = text.match(/total[^0-9]{0,10}(\d{1,3}[.,]?\d{2})/i)
+  if(consumoMatch){
+    consumo = cleanNumber(consumoMatch[1])
+  }
+
+  /* POTENCIA */
+
+  let potencia=null
+
+  const potenciaMatch = text.match(/(\d+[.,]?\d*)\s*kW/i)
+
+  if(potenciaMatch){
+    potencia = cleanNumber(potenciaMatch[1])
+  }
+
+  /* DIAS FACTURADOS */
+
+  let dias=null
+
+  const diasMatch = text.match(/(\d+)\s*d[ií]as/i)
+
+  if(diasMatch){
+    dias=parseInt(diasMatch[1])
+  }
+
+  /* TOTAL FACTURA */
+
+  let precio=null
+
+  const totalMatch = text.match(/total[^0-9]{0,20}([\d.,]+)\s?€/i)
 
   if(totalMatch){
-
-    let valor = totalMatch[1]
-
-    if(!valor.includes(",") && !valor.includes(".") && valor.length > 2){
-      valor = valor.slice(0,-2) + "." + valor.slice(-2)
-    }
-
-    precio = parseFloat(valor.replace(",","."))
-
+    precio = cleanNumber(totalMatch[1])
   }
 
-  if(!precio){
+  /* NOMBRE */
 
-    const precios = text.match(/(\d{1,3}[.,]\d{2})\s?€/g)
+  let nombre=null
 
-    if(precios){
+  const nombreMatch = text.match(/Titular.*?:\s*(.*)/i)
 
-      const ultimo = precios[precios.length - 1]
-
-      let valor = ultimo.replace(/[^\d.,]/g,"")
-
-      if(!valor.includes(",") && !valor.includes(".") && valor.length > 2){
-        valor = valor.slice(0,-2) + "." + valor.slice(-2)
-      }
-
-      precio = parseFloat(valor.replace(",","."))
-
-    }
-
+  if(nombreMatch){
+    nombre = nombreMatch[1].trim()
   }
 
-  return {consumo,potencia,precio}
+  /* DIRECCION */
+
+  let direccion=null
+
+  const dirMatch = text.match(/Direcci[oó]n.*?:\s*(.*)/i)
+
+  if(dirMatch){
+    direccion = dirMatch[1].trim()
+  }
+
+  return {consumo,potencia,precio,dias,nombre,direccion}
 
 }
 
@@ -174,17 +178,24 @@ function extractEnergyData(text){
 /* CALCULO AHORRO */
 /* -------------------------------- */
 
-function calcularAhorro(consumo,precioActual){
+function calcularAhorro(consumo,potencia,dias,precioActual){
 
-  const precioEnergiaLumux = 0.111
+  const energia = consumo * 0.111
 
-  const costeLumux = consumo * precioEnergiaLumux
+  const potenciaCoste = potencia * dias * 0.17
 
-  const ahorroMensual = precioActual - costeLumux
+  let subtotal = energia + potenciaCoste
+
+  subtotal = subtotal * 1.0511269632
+
+  const totalLumux = subtotal * 1.21
+
+  const ahorroMensual = precioActual - totalLumux
+
   const ahorroAnual = ahorroMensual * 12
 
-  return {
-    costeLumux,
+  return{
+    totalLumux,
     ahorroMensual,
     ahorroAnual
   }
@@ -230,39 +241,43 @@ app.post("/chat", async (req,res)=>{
 
       }
 
-      const {consumo,potencia,precio} = extractEnergyData(text)
+      const {consumo,potencia,precio,dias,nombre,direccion} =
+      extractEnergyData(text)
 
-      console.log("DATOS EXTRAIDOS:",{consumo,potencia,precio})
+      console.log("DATOS EXTRAIDOS:",{consumo,potencia,precio,dias,nombre,direccion})
 
-      if(!consumo || !precio || isNaN(consumo) || isNaN(precio)){
+      if(!consumo || !precio || !potencia || !dias){
 
         return res.json({
-          reply:"No he podido leer correctamente la factura. ¿Podrías enviar una foto más clara?"
+          reply:"No he podido analizar correctamente la factura. Intenta enviar otra imagen."
         })
 
       }
 
-      const {costeLumux,ahorroMensual,ahorroAnual} =
-        calcularAhorro(consumo,precio)
+      const {totalLumux,ahorroMensual,ahorroAnual} =
+      calcularAhorro(consumo,potencia,dias,precio)
 
       const reply = `
+
 He analizado tu factura 🔎
 
-Consumo mensual: ${consumo.toFixed(0)} kWh  
-Potencia contratada: ${potencia ?? "no detectada"} kW  
+Titular: ${nombre ?? "No detectado"}
+Dirección: ${direccion ?? "No detectada"}
 
-Coste actual aproximado: ${precio.toFixed(2)} €
+Consumo: ${consumo.toFixed(2)} kWh
+Potencia: ${potencia} kW
+Periodo: ${dias} días
 
-Con nuestras tarifas pagarías aproximadamente:
+Total factura actual: ${precio.toFixed(2)} €
 
-${costeLumux.toFixed(2)} €
+Con Lumux pagarías aproximadamente:
 
-💰 Ahorro estimado mensual: ${ahorroMensual.toFixed(2)} €  
-💰 Ahorro estimado anual: ${ahorroAnual.toFixed(2)} €
+${totalLumux.toFixed(2)} €
 
-El cambio es administrativo y no hay cortes de suministro.
+💰 Ahorro estimado en esta factura: ${ahorroMensual.toFixed(2)} €
+💰 Ahorro anual estimado: ${(ahorroAnual).toFixed(2)} €
 
-¿Quieres saber qué compañía puede ofrecerte este precio y aplicar el ahorro?
+¿Quieres saber qué compañía puede aplicarte este ahorro?
 `
 
       return res.json({reply})
