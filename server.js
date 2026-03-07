@@ -4,16 +4,7 @@ import cors from "cors"
 import OpenAI from "openai"
 import axios from "axios"
 import Tesseract from "tesseract.js"
-import { createRequire } from "module"
 
-const require = createRequire(import.meta.url)
-
-const pdfParseLib = require("pdf-parse")
-
-const pdfParse =
-  pdfParseLib?.default?.default ||
-  pdfParseLib?.default ||
-  pdfParseLib
 
 const app = express()
 app.use(cors())
@@ -63,6 +54,8 @@ async function readPdfOCR(url){
     const response = await axios.get(url,{responseType:"arraybuffer"})
     const buffer = Buffer.from(response.data)
 
+    const pdfParse = (await import("pdf-parse")).default
+
     const data = await pdfParse(buffer)
 
     if(data?.text && data.text.length > 20){
@@ -73,12 +66,11 @@ async function readPdfOCR(url){
     }
 
     console.log("PDF sin texto útil")
-
     return ""
 
   }catch(err){
 
-    console.log("Error leyendo PDF:", err.message)
+    console.log("Error leyendo PDF:",err.message)
     return ""
 
   }
