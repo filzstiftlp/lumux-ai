@@ -50,24 +50,18 @@ async function readPdfOCR(url){
 
     const data = await pdfParse(buffer)
 
-    if(data.text && data.text.length > 50){
+    if(data.text && data.text.length > 20){
       console.log("PDF contiene texto")
       return data.text
     }
 
-    console.log("PDF escaneado → OCR")
-
-    const result = await Tesseract.recognize(buffer,"spa")
-
-    return result?.data?.text || ""
+    console.log("PDF sin texto suficiente")
+    return ""
 
   }catch(err){
 
-    console.log("pdf-parse falló → OCR")
-
-    const result = await Tesseract.recognize(buffer,"spa")
-
-    return result?.data?.text || ""
+    console.log("Error leyendo PDF:", err.message)
+    return ""
   }
 }
 
@@ -81,7 +75,7 @@ function extractEnergyData(text){
 
   let consumo = 0
 
-  const consumos = text.match(/(\d+[,\.]?\d*)\s?kwh/gi)
+  const consumos = text.match(/(\d+[.,]?\d*)\s?kwh/gi)
 
   if(consumos){
 
@@ -120,7 +114,7 @@ function extractEnergyData(text){
     precio = parseFloat(valor.replace(",","."))
   }
 
-  else{
+  if(!precio){
 
     const precios = text.match(/(\d+[.,]?\d*)\s?€/g)
 
@@ -186,19 +180,23 @@ app.post("/chat", async (req,res)=>{
 
       if(input.includes(".pdf")){
         text = await readPdfOCR(input)
-      }
-      else{
+      }else{
         text = await readImageOCR(input)
       }
 
-      console.log("TEXTO OCR:",text)
+      console.log("TEXTO OCR:", text)
+
+      if(!text || text.length < 20){
+        return res.json({
+          reply:"No he podido leer correctamente la factura. ¿Podrías enviar una foto más clara?"
+        })
+      }
 
       const {consumo,potencia,precio} = extractEnergyData(text)
 
-      console.log("DATOS EXTRAIDOS:",{consumo,potencia,precio})
+      console.log("DATOS EXTRAIDOS:", {consumo,potencia,precio})
 
-      if(!consumo || !precio){
-
+      if(!consumo || !precio || isNaN(consumo) || isNaN(precio)){
         return res.json({
           reply:"No he podido leer correctamente la factura. ¿Podrías enviar una foto más clara?"
         })
@@ -237,13 +235,13 @@ El cambio es administrativo y no hay cortes de suministro.
 
     const reply = response.output_text
 
-    res.json({reply})
+    return res.json({reply})
 
   }catch(err){
 
-    console.error("ERROR:",err)
+    console.error("ERROR:", err)
 
-    res.json({
+    return res.json({
       reply:"Ha ocurrido un problema analizando la factura."
     })
   }
