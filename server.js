@@ -9,7 +9,11 @@ import { createRequire } from "module"
 const require = createRequire(import.meta.url)
 
 const pdfParseLib = require("pdf-parse")
-const pdfParse = pdfParseLib.default || pdfParseLib
+
+const pdfParse =
+  pdfParseLib?.default?.default ||
+  pdfParseLib?.default ||
+  pdfParseLib
 
 const app = express()
 app.use(cors())
