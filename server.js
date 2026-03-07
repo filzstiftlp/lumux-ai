@@ -4,7 +4,13 @@ import cors from "cors"
 import OpenAI from "openai"
 import axios from "axios"
 import Tesseract from "tesseract.js"
+import fs from "fs"
+import path from "path"
+import { fileURLToPath } from "url"
+import { exec } from "child_process"
 
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 const app = express()
 app.use(cors())
@@ -44,29 +50,43 @@ async function readImageOCR(url){
 }
 
 /* -------------------------------- */
-/* OCR PDF */
+/* OCR PDF (CONVERSIÓN A IMAGEN) */
 /* -------------------------------- */
 
 async function readPdfOCR(url){
 
   try{
 
+    const pdfPath = path.join(__dirname,"temp.pdf")
+    const imgPath = path.join(__dirname,"temp.png")
+
     const response = await axios.get(url,{responseType:"arraybuffer"})
-    const buffer = Buffer.from(response.data)
+    fs.writeFileSync(pdfPath,response.data)
 
-    const pdfParse = (await import("pdf-parse")).default
+    await new Promise((resolve,reject)=>{
 
-    const data = await pdfParse(buffer)
+      exec(
+        `pdftoppm -png -singlefile ${pdfPath} temp`,
+        {cwd:__dirname},
+        (error)=>{
+          if(error) reject(error)
+          else resolve()
+        }
+      )
 
-    if(data?.text && data.text.length > 20){
+    })
 
-      console.log("PDF contiene texto")
-      return data.text
+    const imageBuffer = fs.readFileSync(imgPath)
 
-    }
+    const result = await Tesseract.recognize(
+      imageBuffer,
+      "spa"
+    )
 
-    console.log("PDF sin texto útil")
-    return ""
+    fs.unlinkSync(pdfPath)
+    fs.unlinkSync(imgPath)
+
+    return result?.data?.text || ""
 
   }catch(err){
 
@@ -123,6 +143,7 @@ function extractEnergyData(text){
     }
 
     precio = parseFloat(valor.replace(",","."))
+
   }
 
   if(!precio){
@@ -140,11 +161,13 @@ function extractEnergyData(text){
       }
 
       precio = parseFloat(valor.replace(",","."))
+
     }
 
   }
 
   return {consumo,potencia,precio}
+
 }
 
 /* -------------------------------- */
@@ -165,6 +188,7 @@ function calcularAhorro(consumo,precioActual){
     ahorroMensual,
     ahorroAnual
   }
+
 }
 
 /* -------------------------------- */
