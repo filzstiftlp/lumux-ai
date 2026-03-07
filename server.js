@@ -116,7 +116,7 @@ function extractEnergyData(text){
 
   let precio = null
 
-  const totalMatch = text.match(/total\s*a\s*pagar[^0-9]*(\d+[.,]?\d*)/i)
+  const totalMatch = text.match(/total[^0-9]{0,10}(\d{1,3}[.,]?\d{2})/i)
 
   if(totalMatch){
 
@@ -131,7 +131,7 @@ function extractEnergyData(text){
 
   if(!precio){
 
-    const precios = text.match(/(\d+[.,]?\d*)\s?€/g)
+    const precios = text.match(/(\d{1,3}[.,]\d{2})\s?€/g)
 
     if(precios){
 
