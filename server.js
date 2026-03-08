@@ -113,74 +113,104 @@ function extractEnergyData(text){
   let precio=null
   let dias=null
 
-  /* CONSUMO TOTAL (prioridad) */
+  /* CONSUMO TOTAL */
 
-  const consumoTotal=text.match(/consumo\s+total[^0-9]*([\d.,]+)\s*kwh/i)
+  const consumoTotal=text.match(/consumo[^0-9]{0,20}([\d.,]+)\s*kwh/i)
 
   if(consumoTotal){
     consumo=cleanNumber(consumoTotal[1])
   }
 
-  /* SUMA CONSUMOS SI NO HAY TOTAL */
+  /* SUMA CONSUMOS */
 
   if(!consumo){
 
-    let total=0
+    const matches=[...text.matchAll(/([\d.,]+)\s*kwh/gi)]
 
-    const consumos=text.match(/([\d.,]+)\s*kwh/gi)
+    let suma=0
 
-    if(consumos){
+    matches.forEach(m=>{
 
-      consumos.forEach(c=>{
+      const val=cleanNumber(m[1])
 
-        const val=cleanNumber(c)
-
-        if(val>0 && val<100000){
-          total+=val
-        }
-
-      })
-
-      if(total>0) consumo=total
-
-    }
-
-  }
-
-  /* POTENCIA */
-
-  const potencias=text.match(/([\d.,]+)\s*kW/gi)
-
-  if(potencias){
-
-    potencias.forEach(p=>{
-
-      const val=cleanNumber(p)
-
-      if(val>1 && val<20){
-        potencia=val
+      if(val>0 && val<20000){
+        suma+=val
       }
 
     })
 
+    if(suma>0 && suma<10000){
+      consumo=suma
+    }
+
   }
 
-  /* DIAS */
+  /* POTENCIA CONTRATADA */
 
-  const dias1=text.match(/(\d+)\s*d[ií]as/i)
-  const dias2=text.match(/DIAS FACTURADOS[:\s]*(\d+)/i)
+  const potenciaContratada=text.match(/potencias?\s*contratadas?.*?([\d.,]+)\s*kW/i)
 
-  if(dias1) dias=parseInt(dias1[1])
-  else if(dias2) dias=parseInt(dias2[1])
+  if(potenciaContratada){
+    potencia=cleanNumber(potenciaContratada[1])
+  }
 
-  /* PRECIO TOTAL */
+  if(!potencia){
+
+    const potencias=[...text.matchAll(/([\d.,]+)\s*kW/gi)]
+
+    let posible=[]
+
+    potencias.forEach(p=>{
+
+      const val=cleanNumber(p[1])
+
+      if(val>=1 && val<=15){
+        posible.push(val)
+      }
+
+    })
+
+    if(posible.length){
+      potencia=Math.min(...posible)
+    }
+
+  }
+
+  /* DIAS FACTURADOS */
+
+  const diasMatches=[...text.matchAll(/(\d{1,2})\s*d[ií]as/gi)]
+
+  if(diasMatches.length){
+
+    let suma=0
+
+    diasMatches.forEach(d=>{
+      suma+=parseInt(d[1])
+    })
+
+    dias=suma
+
+  }
+
+  if(!dias){
+
+    const dias2=text.match(/DIAS\s*FACTURADOS[^0-9]*(\d{1,2})/i)
+
+    if(dias2){
+      dias=parseInt(dias2[1])
+    }
+
+  }
+
+  /* TOTAL FACTURA */
 
   const total1=text.match(/TOTAL\s*IMPORTE\s*FACTURA[^0-9]*([\d.,]+)\s?€/i)
-  const total2=text.match(/TOTAL[^0-9]{0,10}([\d.,]+)\s?€/i)
+
+  const total2=text.match(/TOTAL[^0-9]{0,20}([\d.,]+)\s?€/i)
 
   if(total1){
     precio=cleanNumber(total1[1])
   }
+
   else if(total2){
     precio=cleanNumber(total2[1])
   }
