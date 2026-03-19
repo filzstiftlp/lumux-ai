@@ -446,12 +446,13 @@ app.post("/chat", async (req,res)=>{
     }
 
     let text=""
-
-    if(typeof input==="string" && input.startsWith("http")){
+    
+const inputLimpio = input.trim()
+    if(typeof input==="string" && inputLimpio.startsWith("http")){
 
       console.log("FACTURA DETECTADA")
 
-      if(input.includes(".pdf")){
+      if(inputLimpio.includes(".pdf")){
         text=await readPdfOCR(input)
       }
       else{
@@ -470,6 +471,8 @@ app.post("/chat", async (req,res)=>{
 
       const {consumo,potencia,precio,dias}=extractEnergyData(text)
       const {nombre,direccion}=extractCliente(text)
+      const nombreFinal = nombre || "Cliente"
+const direccionFinal = direccion || "Dirección no disponible"
 
       console.log("DATOS EXTRAIDOS:",{consumo,potencia,precio,dias})
 console.log("CHECK DATOS:", {
@@ -513,8 +516,8 @@ if(isNaN(totalLumux) || isNaN(ahorroFactura) || isNaN(ahorroAnual)){
 
   // 🔥 MENSAJE CON AHORRO
   reply=`
-📍 ${nombre}
-📍 ${direccion}
+📍 ${nombreFinal}
+📍 ${direccionFinal}
 
 He analizado tu factura 🔎
 
