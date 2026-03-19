@@ -484,10 +484,10 @@ console.log("CHECK DATOS:", {
   }
 })
       if(
-  consumo === null ||
-  precio === null ||
-  potencia === null ||
-  dias === null
+  !consumo || isNaN(consumo) ||
+  !precio || isNaN(precio) ||
+  !potencia || isNaN(potencia) ||
+  !dias || isNaN(dias)
 ){
 
   return res.json({
@@ -508,7 +508,7 @@ if(isNaN(totalLumux) || isNaN(ahorroFactura) || isNaN(ahorroAnual)){
 
       let reply=""
 
-      if(ahorroAnual > 40){
+      if(ahorroFactura > 5){
 
   // 🔥 MENSAJE CON AHORRO
   reply=`
