@@ -492,10 +492,15 @@ console.log("ANTES DEL IF CRÍTICO:", {
   potencia === null || isNaN(potencia) ||
   dias === null || isNaN(dias)
 ){
+  console.log("⚠️ DATOS INCOMPLETOS, PERO CONTINUAMOS")
 
+  // 🔥 NO cortamos aquí
+}if(!consumo || !precio){
   return res.json({
-    reply:"Estamos actualizando nuestra herramienta 🛠️🙂\n\nEn breve uno de nuestros agentes revisará tu factura y te enviará tu ahorro exacto."
+    reply:"No he podido analizar bien la factura. ¿Puedes enviarla de nuevo?"
   })
+}
+console.log("RESPUESTA ENVIADA A MANYCHAT:", reply)
 
 }
 
