@@ -472,8 +472,24 @@ app.post("/chat", async (req,res)=>{
       const {nombre,direccion}=extractCliente(text)
 
       console.log("DATOS EXTRAIDOS:",{consumo,potencia,precio,dias})
-
-      if(!consumo || !precio || !potencia || !dias){
+console.log("CHECK DATOS:", {
+  consumo,
+  potencia,
+  precio,
+  dias,
+  tipos: {
+    consumo: typeof consumo,
+    potencia: typeof potencia,
+    precio: typeof precio,
+    dias: typeof dias
+  }
+})
+      if(
+  consumo === null ||
+  precio === null ||
+  potencia === null ||
+  dias === null
+){
 
   return res.json({
     reply:"Estamos actualizando nuestra herramienta 🛠️🙂\n\nEn breve uno de nuestros agentes revisará tu factura y te enviará tu ahorro exacto."
