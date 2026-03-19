@@ -132,6 +132,12 @@ function extractEnergyData(text){
   text = text.toLowerCase()
 
   let consumo=null
+  // 🔥 PRIORIDAD ABSOLUTA: "energia consumida XXX kWh"
+const energiaConsumida = text.match(/energia\s*consumida[^0-9]{0,20}([\d.,]+)\s*kwh/i)
+
+if(energiaConsumida){
+  consumo = cleanNumber(energiaConsumida[1])
+}
   let potencia=null
   let precio=null
   let dias=null
@@ -142,15 +148,15 @@ function extractEnergyData(text){
 // 🔥 FIX IBERDROLA (consumo total)
 const consumoIberdrola = text.match(/consumo\s+total[^0-9]{0,50}([\d.,]+)\s*kwh/i)
 
-if(consumoIberdrola){
+if(!consumo && consumoIberdrola){
   consumo = cleanNumber(consumoIberdrola[1])
 }
   // Caso ideal: "consumo total"
   const consumoTotal = text.match(/consumo\s*(total)?[^0-9]{0,30}([\d.,]+)\s*kwh/i)
 
-  if(consumoTotal){
-    consumo = cleanNumber(consumoTotal[2])
-  }
+  if(!consumo && consumoTotal){
+  consumo = cleanNumber(consumoTotal[2])
+}
 
   // Caso real: suma de periodos (P1, P2, P3...)
   if(!consumo){
@@ -249,7 +255,7 @@ if(consumoIberdrola){
   --------------------------*/
 
   // 🔥 FIX REAL dias facturados
-const diasFacturados = text.match(/dias\s*facturados[^0-9]{0,10}(\d{1,3})/i)
+const diasFacturados = text.match(/dias\s*facturados[^0-9]{0,50}(\d{1,3})/i)
 
 if(diasFacturados){
   dias = parseInt(diasFacturados[1])
