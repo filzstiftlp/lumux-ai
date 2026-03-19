@@ -550,27 +550,21 @@ if(isNaN(totalLumux) || isNaN(ahorroFactura) || isNaN(ahorroAnual)){
       if(ahorroFactura > 5){
 
   // 🔥 MENSAJE CON AHORRO
-reply = `
-📍 ${nombreFinal}
-📍 ${direccionFinal}
+reply = `📍 ${nombreFinal}
+${direccionFinal}
 
-He analizado tu factura
-
-Consumo: ${consumo.toFixed(2)} kWh
+Consumo: ${consumo.toFixed(0)} kWh
 Potencia: ${potencia} kW
 Periodo: ${dias} días
 
-Total factura actual: ${precio.toFixed(2)} €
+Factura actual: ${precio.toFixed(2)} €
 
-Con Lumux pagarías aproximadamente:
+Con Lumux: ${totalLumux.toFixed(2)} €
 
-${totalLumux.toFixed(2)} €
-
-Ahorro factura: ${ahorroFactura.toFixed(2)} €
+Ahorro: ${ahorroFactura.toFixed(2)} €
 Ahorro anual: ${ahorroAnual.toFixed(2)} €
 
-¿Quieres saber qué compañía puede aplicarte este ahorro?
-`.trim()
+¿Quieres mejorar tu tarifa?`.trim()
 
 }else{
 
@@ -603,11 +597,7 @@ Te avisaremos si detectamos una bajada de precios que pueda beneficiarte.
   ahorroAnual
 })
 console.log("RESPUESTA ENVIADA A MANYCHAT:", reply)
-      res.setHeader("Content-Type", "application/json")
-reply = String(reply)
-  .replace(/[^\x00-\x7F]/g, "") // limpia caracteres raros
-  .replace(/\s+/g, " ")        // limpia espacios duplicados
-  .trim()
+reply = String(reply).trim()
 return res.status(200).json({
   reply: reply
 })
