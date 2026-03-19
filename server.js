@@ -59,13 +59,10 @@ function extractCliente(text){
   for(let i=0;i<lineas.length;i++){
 
     if(
-      lineas[i].includes("titular") ||
-      lineas[i].includes("fructuoso") ||
-      lineas[i].includes("navarro")
-    ){
-      nombre = lineas[i].trim()
-    }
-
+  lineas[i].match(/^[A-Z\s]{5,}$/)
+){
+  nombre = lineas[i].trim()
+}
     if(
       lineas[i].includes("direccion") ||
       lineas[i].includes("prje") ||
@@ -483,11 +480,17 @@ console.log("CHECK DATOS:", {
     dias: typeof dias
   }
 })
+console.log("ANTES DEL IF CRÍTICO:", {
+  consumo,
+  potencia,
+  precio,
+  dias
+})
       if(
-  !consumo || isNaN(consumo) ||
-  !precio || isNaN(precio) ||
-  !potencia || isNaN(potencia) ||
-  !dias || isNaN(dias)
+  consumo === null || isNaN(consumo) ||
+  precio === null || isNaN(precio) ||
+  potencia === null || isNaN(potencia) ||
+  dias === null || isNaN(dias)
 ){
 
   return res.json({
@@ -497,6 +500,16 @@ console.log("CHECK DATOS:", {
 }
 
       let {totalLumux,ahorroFactura,ahorroAnual}=calcularAhorro(consumo,potencia,dias,precio)
+      console.log("TIPOS AHORRO:", {
+  totalLumux,
+  ahorroFactura,
+  ahorroAnual,
+  tipos: {
+    totalLumux: typeof totalLumux,
+    ahorroFactura: typeof ahorroFactura,
+    ahorroAnual: typeof ahorroAnual
+  }
+})
 
 // 🔥 PROTECCIÓN TOTAL
 if(isNaN(totalLumux) || isNaN(ahorroFactura) || isNaN(ahorroAnual)){
@@ -537,8 +550,8 @@ ${totalLumux.toFixed(2)} €
 
   // 🔹 MENSAJE SIN AHORRO
   reply=`
-📍 ${nombre}
-📍 ${direccion}
+${nombreFinal}
+${direccionFinal}
 
 He analizado tu factura 🔎
 
