@@ -49,7 +49,35 @@ async function readImageOCR(url){
 
   }
 }
+function extractCliente(text){
 
+  const lineas = text.split("\n")
+
+  let nombre = ""
+  let direccion = ""
+
+  for(let i=0;i<lineas.length;i++){
+
+    if(
+      lineas[i].includes("titular") ||
+      lineas[i].includes("fructuoso") ||
+      lineas[i].includes("navarro")
+    ){
+      nombre = lineas[i].trim()
+    }
+
+    if(
+      lineas[i].includes("direccion") ||
+      lineas[i].includes("prje") ||
+      lineas[i].includes("calle")
+    ){
+      direccion = lineas[i].trim()
+    }
+
+  }
+
+  return {nombre,direccion}
+}
 /* OCR PDF */
 
 async function readPdfOCR(url){
@@ -441,6 +469,7 @@ app.post("/chat", async (req,res)=>{
       }
 
       const {consumo,potencia,precio,dias}=extractEnergyData(text)
+      const {nombre,direccion}=extractCliente(text)
 
       console.log("DATOS EXTRAIDOS:",{consumo,potencia,precio,dias})
 
@@ -452,13 +481,24 @@ app.post("/chat", async (req,res)=>{
 
 }
 
-      const {totalLumux,ahorroFactura,ahorroAnual}=calcularAhorro(consumo,potencia,dias,precio)
+      let {totalLumux,ahorroFactura,ahorroAnual}=calcularAhorro(consumo,potencia,dias,precio)
+
+// 🔥 PROTECCIÓN TOTAL
+if(isNaN(totalLumux) || isNaN(ahorroFactura) || isNaN(ahorroAnual)){
+  console.log("ERROR CALCULO NaN")
+  return res.json({
+    reply:"Estamos actualizando nuestra herramienta 🛠️🙂\n\nEn breve uno de nuestros agentes revisará tu factura y te enviará tu ahorro exacto."
+  })
+}
 
       let reply=""
 
-      if(ahorroAnual<40){
+      if(ahorroAnual <= 40){
 
         reply=`
+📍 ${nombre}
+📍 ${direccion}
+
 He analizado tu factura 🔎
 
 Consumo: ${consumo.toFixed(2)} kWh
@@ -467,9 +507,14 @@ Periodo: ${dias} días
 
 Total factura actual: ${precio.toFixed(2)} €
 
-Actualmente tu tarifa ya está bastante optimizada.
+Con Lumux pagarías aproximadamente:
 
-Te avisaremos si detectamos una bajada de precios que pueda beneficiarte.
+${totalLumux.toFixed(2)} €
+
+💰 Ahorro en esta factura: ${ahorroFactura.toFixed(2)} €
+💰 Ahorro anual estimado: ${ahorroAnual.toFixed(2)} €
+
+¿Quieres saber qué compañía puede aplicarte este ahorro?
 `
 
       }else{
