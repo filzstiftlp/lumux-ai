@@ -128,10 +128,6 @@ fs.unlinkSync(pdfPath)
 
 return textTotal
 
-    fs.unlinkSync(pdfPath)
-    fs.unlinkSync(imgPath)
-
-    return result?.data?.text || ""
 
   }catch(err){
 
@@ -453,10 +449,10 @@ const inputLimpio = input.trim()
       console.log("FACTURA DETECTADA")
 
       if(inputLimpio.includes(".pdf")){
-        text=await readPdfOCR(input)
+        text=await readPdfOCR(inputLimpio)
       }
       else{
-        text=await readImageOCR(input)
+        text=await readImageOCR(inputLimpio)
       }
 
       console.log("TEXTO OCR:",text)
