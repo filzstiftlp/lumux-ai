@@ -499,8 +499,6 @@ console.log("ANTES DEL IF CRÍTICO:", {
   })
 }
 
-}
-
       let {totalLumux,ahorroFactura,ahorroAnual}=calcularAhorro(consumo,potencia,dias,precio)
       console.log("TIPOS AHORRO:", {
   totalLumux,
