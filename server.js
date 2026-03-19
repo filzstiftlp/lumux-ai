@@ -49,6 +49,32 @@ async function readImageOCR(url){
 
   }
 }
+async function enviarRespuestaManychat(subscriber_id, mensaje){
+
+  try{
+
+    await axios.post(
+      "https://api.manychat.com/fb/subscriber/setCustomField",
+      {
+        subscriber_id: subscriber_id,
+        field_name: "respuesta_ia",
+        field_value: mensaje
+      },
+      {
+        headers: {
+          "Authorization": `Bearer ${process.env.MANYCHAT_API_KEY}`,
+          "Content-Type": "application/json"
+        }
+      }
+    )
+
+    console.log("✅ Campo actualizado en Manychat")
+
+  }catch(err){
+    console.log("❌ Error enviando a Manychat:", err.response?.data || err.message)
+  }
+
+}
 function extractCliente(text){
 
   const lineas = text.split("\n").map(l => l.trim()).filter(l => l.length > 0)
@@ -582,6 +608,11 @@ Te avisaremos si detectamos una bajada de precios que pueda beneficiarte.
   ahorroAnual
 })
 console.log("RESPUESTA ENVIADA A MANYCHAT:", reply)
+console.log("SUBSCRIBER ID:", subscriber_id)
+console.log("API KEY MANYCHAT:", process.env.MANYCHAT_API_KEY)
+if(subscriber_id){
+  await enviarRespuestaManychat(subscriber_id, reply)
+}
 reply = String(reply).trim()
 res.setHeader("Content-Type", "application/json")
 
