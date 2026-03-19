@@ -512,6 +512,17 @@ console.log("ANTES DEL IF CRÍTICO:", {
   precio,
   dias
 })
+      if(
+  consumo === null || isNaN(consumo) ||
+  precio === null || isNaN(precio) ||
+  potencia === null || isNaN(potencia) ||
+  dias === null || isNaN(dias)
+){
+  console.log("⚠️ DATOS INCOMPLETOS")
+
+  return res.json({
+    reply:"No he podido analizar bien la factura. ¿Puedes enviarla de nuevo?"
+  })
 }
 
       let {totalLumux,ahorroFactura,ahorroAnual}=calcularAhorro(consumo,potencia,dias,precio)
@@ -581,8 +592,10 @@ return res.json({
 
     }
 
-    
-
+    return res.status(200).json({
+  reply: "No he recibido una factura válida."
+})
+}
 
   catch(err){
 
