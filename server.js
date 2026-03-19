@@ -65,7 +65,7 @@ async function readPdfOCR(url){
     await new Promise((resolve,reject)=>{
 
       exec(
-        `pdftoppm -png -singlefile ${pdfPath} temp`,
+        `pdftoppm -png ${pdfPath} temp`,
         {cwd:__dirname},
         (error)=>{
           if(error) reject(error)
@@ -75,15 +75,30 @@ async function readPdfOCR(url){
 
     })
 
-    const imageBuffer = fs.readFileSync(imgPath)
+    let textTotal = ""
 
-    const result = await Tesseract.recognize(
-  imageBuffer,
-  "spa+eng",
-  {
-    tessedit_char_whitelist: "0123456789.,€kWhkW/:- "
-  }
-)
+const files = fs.readdirSync(__dirname).filter(f => f.startsWith("temp-") && f.endsWith(".png"))
+
+for(const file of files){
+
+  const imageBuffer = fs.readFileSync(path.join(__dirname,file))
+
+  const result = await Tesseract.recognize(
+    imageBuffer,
+    "spa+eng",
+    {
+      tessedit_char_whitelist: "0123456789.,€kWhkW/:- "
+    }
+  )
+
+  textTotal += "\n" + (result?.data?.text || "")
+
+  fs.unlinkSync(path.join(__dirname,file))
+}
+
+fs.unlinkSync(pdfPath)
+
+return textTotal
 
     fs.unlinkSync(pdfPath)
     fs.unlinkSync(imgPath)
