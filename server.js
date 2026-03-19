@@ -463,10 +463,9 @@ app.post("/chat", async (req,res)=>{
 
     let text=""
     
-const inputLimpio = input
+const inputLimpio = String(input)
+  .replace(/[{}]/g, "")
   .trim()
-  .replace(/^{{/, "")
-  .replace(/}}$/, "")
   console.log("INPUT LIMPIO:", inputLimpio)
     if(inputLimpio && inputLimpio.includes("http")){
 
@@ -571,7 +570,7 @@ Ahorro factura: ${ahorroFactura.toFixed(2)} €
 Ahorro anual: ${ahorroAnual.toFixed(2)} €
 
 ¿Quieres saber qué compañía puede aplicarte este ahorro?
-`.replace(/\n/g, " ").trim()
+`.trim()
 
 }else{
 
@@ -605,7 +604,10 @@ Te avisaremos si detectamos una bajada de precios que pueda beneficiarte.
 })
 console.log("RESPUESTA ENVIADA A MANYCHAT:", reply)
       res.setHeader("Content-Type", "application/json")
-
+reply = String(reply)
+  .replace(/[^\x00-\x7F]/g, "") // limpia caracteres raros
+  .replace(/\s+/g, " ")        // limpia espacios duplicados
+  .trim()
 return res.status(200).json({
   reply: reply
 })
