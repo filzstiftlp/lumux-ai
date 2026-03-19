@@ -550,21 +550,7 @@ if(isNaN(totalLumux) || isNaN(ahorroFactura) || isNaN(ahorroAnual)){
       if(ahorroFactura > 5){
 
   // 🔥 MENSAJE CON AHORRO
-reply = `📍 ${nombreFinal}
-${direccionFinal}
-
-Consumo: ${consumo.toFixed(0)} kWh
-Potencia: ${potencia} kW
-Periodo: ${dias} días
-
-Factura actual: ${precio.toFixed(2)} €
-
-Con Lumux: ${totalLumux.toFixed(2)} €
-
-Ahorro: ${ahorroFactura.toFixed(2)} €
-Ahorro anual: ${ahorroAnual.toFixed(2)} €
-
-¿Quieres mejorar tu tarifa?`.trim()
+reply = `Cliente: ${nombreFinal} | Consumo: ${consumo} kWh | Potencia: ${potencia} kW | Factura: ${precio} € | Lumux: ${totalLumux.toFixed(2)} € | Ahorro: ${ahorroFactura.toFixed(2)} €`
 
 }else{
 
