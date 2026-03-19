@@ -585,9 +585,9 @@ console.log("RESPUESTA ENVIADA A MANYCHAT:", reply)
 reply = String(reply).trim()
 res.setHeader("Content-Type", "application/json")
 
-return res.send(JSON.stringify({
-  reply: "🔥 FUNCIONA 🔥"
-}))
+return res.json({
+  text: reply
+})
 
     }
 
