@@ -462,7 +462,11 @@ app.post("/chat", async (req,res)=>{
 
     let text=""
     
-const inputLimpio = input.trim()
+const inputLimpio = input
+  .trim()
+  .replace(/^{{/, "")
+  .replace(/}}$/, "")
+  console.log("INPUT LIMPIO:", inputLimpio)
     if(typeof input==="string" && inputLimpio.startsWith("http")){
 
       console.log("FACTURA DETECTADA")
