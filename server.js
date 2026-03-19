@@ -452,7 +452,8 @@ app.post("/chat", async (req,res)=>{
 
   try{
 
-    const input=req.body.message
+    const input = req.body.message || req.body.text || ""
+    console.log("BODY COMPLETO:", req.body)
 
     console.log("INPUT RECIBIDO:",input)
 
@@ -467,7 +468,7 @@ const inputLimpio = input
   .replace(/^{{/, "")
   .replace(/}}$/, "")
   console.log("INPUT LIMPIO:", inputLimpio)
-    if(typeof input==="string" && inputLimpio.startsWith("http")){
+    if(inputLimpio && inputLimpio.includes("http")){
 
       console.log("FACTURA DETECTADA")
 
@@ -607,16 +608,10 @@ console.log("RESPUESTA ENVIADA A MANYCHAT:", reply)
 
     }
 
-    const response=await client.responses.create({
-      model:"gpt-4o-mini",
-      input:input
-    })
-
-    const reply=response.output_text
-
-    return res.json({reply})
-
-  }
+    return res.status(200).json({
+  reply: "No he recibido una factura válida."
+})
+}
 
   catch(err){
 
