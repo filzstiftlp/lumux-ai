@@ -584,9 +584,7 @@ Te avisaremos si detectamos una bajada de precios que pueda beneficiarte.
 })
 console.log("RESPUESTA ENVIADA A MANYCHAT:", reply)
 reply = String(reply).trim()
-return res.status(200).json({
-  reply: reply
-})
+return res.send({ text: reply })
 
     }
 
