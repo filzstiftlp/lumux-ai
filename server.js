@@ -133,10 +133,26 @@ function extractEnergyData(text){
 
   let consumo=null
   // 🔥 PRIORIDAD ABSOLUTA: "energia consumida XXX kWh"
-const energiaConsumida = text.match(/energia\s*consumida[^0-9]{0,20}([\d.,]+)\s*kwh/i)
+// 🔥 MÉTODO ROBUSTO REAL (como CalculaTuLuz)
+if(!consumo){
 
-if(energiaConsumida){
-  consumo = cleanNumber(energiaConsumida[1])
+  const lineas = text.split("\n")
+
+  for(const line of lineas){
+
+    if(line.includes("energia consumida")){
+
+      const match = line.match(/([\d.,]+)\s*kwh/)
+
+      if(match){
+        consumo = cleanNumber(match[1])
+        break
+      }
+
+    }
+
+  }
+
 }
   let potencia=null
   let precio=null
@@ -255,10 +271,31 @@ if(!consumo && consumoIberdrola){
   --------------------------*/
 
   // 🔥 FIX REAL dias facturados
-const diasFacturados = text.match(/dias\s*facturados[^0-9]{0,50}(\d{1,3})/i)
+// 🔥 FIX DEFINITIVO DIAS (OCR REAL)
+if(!dias){
 
-if(diasFacturados){
-  dias = parseInt(diasFacturados[1])
+  const lineas = text.split("\n")
+
+  for(let i = 0; i < lineas.length; i++){
+
+    if(lineas[i].includes("dias facturados")){
+
+      let match = lineas[i].match(/(\d{1,3})/)
+
+      // 👇 clave: mirar siguiente línea
+      if(!match && lineas[i+1]){
+        match = lineas[i+1].match(/(\d{1,3})/)
+      }
+
+      if(match){
+        dias = parseInt(match[1])
+        break
+      }
+
+    }
+
+  }
+
 }
 
 // fallback
