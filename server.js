@@ -267,38 +267,69 @@ if(!consumo && consumoIberdrola){
   }
 
   /* -------------------------
-     3. DÍAS FACTURADOS
-  --------------------------*/
+   3. DÍAS FACTURADOS (DOBLE MÉTODO)
+--------------------------*/
 
-  // 🔥 FIX REAL dias facturados
-// 🔥 FIX DEFINITIVO DIAS (OCR REAL)
-if(!dias){
+let diasTexto = null
+let diasFechas = null
 
-  const lineas = text.split("\n")
+const lineas = text.split("\n")
 
-  for(let i = 0; i < lineas.length; i++){
+// 🔹 1. SACAR DIAS DESDE TEXTO (mejorado)
+for(let i = 0; i < lineas.length; i++){
 
-    if(
-  lineas[i].includes("dias facturados") ||
-  lineas[i].includes("días facturados")
-){
+  if(
+    lineas[i].includes("dias facturados") ||
+    lineas[i].includes("días facturados")
+  ){
 
-      let match = lineas[i].match(/\b(\d{1,3})\b/)
-
-      // 👇 clave: mirar siguiente línea
-      if(!match && lineas[i+1]){
-        match = lineas[i+1].match(/(\d{1,3})/)
+    // PRIORIDAD: siguiente línea (evita el "3")
+    if(lineas[i+1]){
+      const matchNext = lineas[i+1].match(/\b(\d{1,3})\b/)
+      if(matchNext){
+        diasTexto = parseInt(matchNext[1])
       }
-
-      if(match){
-        dias = parseInt(match[1])
-        break
-      }
-
     }
 
+    // fallback: misma línea (solo si no hay otra opción)
+    if(!diasTexto){
+  const matchLine = lineas[i].match(/\b(\d{2,3})\b/)
+  if(matchLine){
+    diasTexto = parseInt(matchLine[1])
   }
+}
 
+    break
+  }
+}
+
+// 🔹 2. CALCULAR DIAS DESDE FECHAS (MÉTODO PRO)
+const fechas = text.match(/(\d{2}\/\d{2}\/\d{4})/g)
+
+if(fechas && fechas.length >= 2){
+
+  const inicio = new Date(fechas[0])
+  const fin = new Date(fechas[1])
+
+  const diff = Math.abs((fin - inicio) / (1000*60*60*24))
+
+  // +1 porque cuenta ambos días (inicio y fin)
+  diasFechas = Math.round(diff) + 1
+}
+
+// 🔹 3. DECISIÓN FINAL (INTELIGENTE)
+
+// Caso ideal: coinciden
+if(diasTexto && diasFechas && Math.abs(diasTexto - diasFechas) <= 3){
+  dias = diasTexto
+}
+
+// Si solo uno existe
+else if(diasTexto){
+  dias = diasTexto
+}
+else if(diasFechas){
+  dias = diasFechas
 }
 
 // fallback
