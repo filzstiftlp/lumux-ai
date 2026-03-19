@@ -479,6 +479,7 @@ app.post("/chat", async (req,res)=>{
   try{
 
     const input = req.body.message || req.body.text || ""
+    const subscriber_id = req.body.subscriber?.id
     console.log("BODY COMPLETO:", req.body)
 
     console.log("INPUT RECIBIDO:",input)
