@@ -140,7 +140,7 @@ if(!consumo){
 
   for(const line of lineas){
 
-    if(line.includes("energia consumida")){
+    if(line.includes("consumida") && line.includes("kwh")){
 
       const match = line.match(/([\d.,]+)\s*kwh/)
 
@@ -278,9 +278,12 @@ if(!dias){
 
   for(let i = 0; i < lineas.length; i++){
 
-    if(lineas[i].includes("dias facturados")){
+    if(
+  lineas[i].includes("dias facturados") ||
+  lineas[i].includes("días facturados")
+){
 
-      let match = lineas[i].match(/(\d{1,3})/)
+      let match = lineas[i].match(/\b(\d{1,3})\b/)
 
       // 👇 clave: mirar siguiente línea
       if(!match && lineas[i+1]){
