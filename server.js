@@ -54,11 +54,15 @@ async function enviarRespuestaManychat(subscriber_id, mensaje){
   try{
 
     await axios.post(
-      "https://api.manychat.com/fb/subscriber/setCustomField",
+      "https://api.manychat.com/fb/subscriber/setCustomFields",
       {
         subscriber_id: subscriber_id,
-        field_name: "respuesta_ia",
-        field_value: mensaje
+        fields: [
+          {
+            field_name: "respuesta_ia",
+            field_value: mensaje
+          }
+        ]
       },
       {
         headers: {
