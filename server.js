@@ -545,7 +545,7 @@ if(isNaN(totalLumux) || isNaN(ahorroFactura) || isNaN(ahorroAnual)){
   })
 }
 
-
+let reply = ""
       if(ahorroFactura > 5){
 
   // 🔥 MENSAJE CON AHORRO
