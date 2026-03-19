@@ -124,7 +124,12 @@ function extractEnergyData(text){
   /* -------------------------
      1. CONSUMO (MEJORADO)
   --------------------------*/
+// 🔥 FIX IBERDROLA (consumo total)
+const consumoIberdrola = text.match(/consumo\s+total[^0-9]{0,50}([\d.,]+)\s*kwh/i)
 
+if(consumoIberdrola){
+  consumo = cleanNumber(consumoIberdrola[1])
+}
   // Caso ideal: "consumo total"
   const consumoTotal = text.match(/consumo\s*(total)?[^0-9]{0,30}([\d.,]+)\s*kwh/i)
 
@@ -228,28 +233,30 @@ function extractEnergyData(text){
      3. DÍAS FACTURADOS
   --------------------------*/
 
-  const diasMatch = text.match(/(\d{1,3})\s*d[ií]as/i)
+  // 🔥 FIX REAL dias facturados
+const diasFacturados = text.match(/dias\s*facturados[^0-9]{0,10}(\d{1,3})/i)
 
-  if(diasMatch){
-    dias = parseInt(diasMatch[1])
-  }
+if(diasFacturados){
+  dias = parseInt(diasFacturados[1])
+}
 
-  if(!dias){
+// fallback
+if(!dias){
 
-    const fechas = text.match(/(\d{2}\/\d{2}\/\d{4})/g)
+  const fechas = text.match(/(\d{2}\/\d{2}\/\d{4})/g)
 
-    if(fechas && fechas.length >= 2){
-      const inicio = new Date(fechas[0])
-      const fin = new Date(fechas[1])
+  if(fechas && fechas.length >= 2){
+    const inicio = new Date(fechas[0])
+    const fin = new Date(fechas[1])
 
-      const diff = Math.abs((fin - inicio) / (1000*60*60*24))
+    const diff = Math.abs((fin - inicio) / (1000*60*60*24))
 
-      if(diff > 0 && diff < 100){
-        dias = Math.round(diff)
-      }
+    if(diff > 0 && diff < 100){
+      dias = Math.round(diff)
     }
-
   }
+
+}
 
   /* -------------------------
      4. PRECIO TOTAL
@@ -340,11 +347,11 @@ app.post("/chat", async (req,res)=>{
 
       if(!consumo || !precio || !potencia || !dias){
 
-        return res.json({
-          reply:"No he podido analizar correctamente la factura."
-        })
+  return res.json({
+    reply:"Estamos actualizando nuestra herramienta 🛠️🙂\n\nEn breve uno de nuestros agentes revisará tu factura y te enviará tu ahorro exacto."
+  })
 
-      }
+}
 
       const {totalLumux,ahorroFactura,ahorroAnual}=calcularAhorro(consumo,potencia,dias,precio)
 
