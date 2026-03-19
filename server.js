@@ -33,9 +33,12 @@ async function readImageOCR(url){
     const response = await axios.get(url,{responseType:"arraybuffer"})
 
     const result = await Tesseract.recognize(
-      Buffer.from(response.data),
-      "spa"
-    )
+  Buffer.from(response.data),
+  "spa+eng",
+  {
+    tessedit_char_whitelist: "0123456789.,€kWhkW/:- "
+  }
+)
 
     return result?.data?.text || ""
 
@@ -75,9 +78,12 @@ async function readPdfOCR(url){
     const imageBuffer = fs.readFileSync(imgPath)
 
     const result = await Tesseract.recognize(
-      imageBuffer,
-      "spa"
-    )
+  imageBuffer,
+  "spa+eng",
+  {
+    tessedit_char_whitelist: "0123456789.,€kWhkW/:- "
+  }
+)
 
     fs.unlinkSync(pdfPath)
     fs.unlinkSync(imgPath)
@@ -108,111 +114,159 @@ function extractEnergyData(text){
 
   if(!text) return {consumo:null,potencia:null,precio:null,dias:null}
 
+  text = text.toLowerCase()
+
   let consumo=null
   let potencia=null
   let precio=null
   let dias=null
 
-  /* CONSUMO TOTAL */
+  /* -------------------------
+     1. CONSUMO (MEJORADO)
+  --------------------------*/
 
-  const consumoTotal=text.match(/consumo[^0-9]{0,20}([\d.,]+)\s*kwh/i)
+  // Caso ideal: "consumo total"
+  const consumoTotal = text.match(/consumo\s*(total)?[^0-9]{0,30}([\d.,]+)\s*kwh/i)
 
   if(consumoTotal){
-    consumo=cleanNumber(consumoTotal[1])
+    consumo = cleanNumber(consumoTotal[2])
   }
 
-  /* SUMA CONSUMOS */
-
+  // Caso real: suma de periodos (P1, P2, P3...)
   if(!consumo){
 
-    const matches=[...text.matchAll(/([\d.,]+)\s*kwh/gi)]
+    const lineas = text.split("\n")
 
-    let suma=0
+    let suma = 0
 
-    matches.forEach(m=>{
+    lineas.forEach(line => {
 
-      const val=cleanNumber(m[1])
+      if(
+        line.includes("kwh") &&
+        (
+          line.includes("p1") ||
+          line.includes("p2") ||
+          line.includes("p3") ||
+          line.includes("periodo") ||
+          line.includes("punta") ||
+          line.includes("valle")
+        )
+      ){
 
-      if(val>0 && val<20000){
-        suma+=val
+        const match = line.match(/([\d.,]+)\s*kwh/)
+
+        if(match){
+          const val = cleanNumber(match[1])
+
+          if(val > 0 && val < 20000){
+            suma += val
+          }
+        }
+
       }
 
     })
 
-    if(suma>0 && suma<10000){
-      consumo=suma
+    if(suma > 0){
+      consumo = suma
     }
 
   }
 
-  /* POTENCIA CONTRATADA */
+  // Fallback bruto (último recurso)
+  if(!consumo){
 
-  const potenciaContratada=text.match(/potencias?\s*contratadas?.*?([\d.,]+)\s*kW/i)
+    const matches = [...text.matchAll(/([\d.,]+)\s*kwh/gi)]
 
-  if(potenciaContratada){
-    potencia=cleanNumber(potenciaContratada[1])
+    let max = 0
+
+    matches.forEach(m=>{
+      const val = cleanNumber(m[1])
+      if(val > max && val < 20000){
+        max = val
+      }
+    })
+
+    if(max > 0){
+      consumo = max
+    }
+
+  }
+
+  /* -------------------------
+     2. POTENCIA (MEJORADO)
+  --------------------------*/
+
+  const potenciaMatch = text.match(/potencia\s*(contratada)?[^0-9]{0,20}([\d.,]+)\s*kW/i)
+
+  if(potenciaMatch){
+    potencia = cleanNumber(potenciaMatch[2])
   }
 
   if(!potencia){
 
-    const potencias=[...text.matchAll(/([\d.,]+)\s*kW/gi)]
+    const matches = [...text.matchAll(/([\d.,]+)\s*kW/gi)]
 
-    let posible=[]
+    let posibles = []
 
-    potencias.forEach(p=>{
+    matches.forEach(m=>{
+      const val = cleanNumber(m[1])
 
-      const val=cleanNumber(p[1])
-
-      if(val>=1 && val<=15){
-        posible.push(val)
+      // filtramos valores realistas de potencia doméstica
+      if(val >= 1 && val <= 15){
+        posibles.push(val)
       }
-
     })
 
-    if(posible.length){
-      potencia=Math.min(...posible)
+    if(posibles.length){
+      potencia = Math.min(...posibles)
     }
 
   }
 
-  /* DIAS FACTURADOS */
+  /* -------------------------
+     3. DÍAS FACTURADOS
+  --------------------------*/
 
-  const diasMatches=[...text.matchAll(/(\d{1,2})\s*d[ií]as/gi)]
+  const diasMatch = text.match(/(\d{1,3})\s*d[ií]as/i)
 
-  if(diasMatches.length){
-
-    let suma=0
-
-    diasMatches.forEach(d=>{
-      suma+=parseInt(d[1])
-    })
-
-    dias=suma
-
+  if(diasMatch){
+    dias = parseInt(diasMatch[1])
   }
 
   if(!dias){
 
-    const dias2=text.match(/DIAS\s*FACTURADOS[^0-9]*(\d{1,2})/i)
+    const fechas = text.match(/(\d{2}\/\d{2}\/\d{4})/g)
 
-    if(dias2){
-      dias=parseInt(dias2[1])
+    if(fechas && fechas.length >= 2){
+      const inicio = new Date(fechas[0])
+      const fin = new Date(fechas[1])
+
+      const diff = Math.abs((fin - inicio) / (1000*60*60*24))
+
+      if(diff > 0 && diff < 100){
+        dias = Math.round(diff)
+      }
     }
 
   }
 
-  /* TOTAL FACTURA */
+  /* -------------------------
+     4. PRECIO TOTAL
+  --------------------------*/
 
-  const total1=text.match(/TOTAL\s*IMPORTE\s*FACTURA[^0-9]*([\d.,]+)\s?€/i)
+  const totalPatterns = [
+    /total\s*importe\s*factura[^0-9]*([\d.,]+)\s?€/i,
+    /importe\s*total[^0-9]*([\d.,]+)\s?€/i,
+    /total[^0-9]{0,15}([\d.,]+)\s?€/i
+  ]
 
-  const total2=text.match(/TOTAL[^0-9]{0,20}([\d.,]+)\s?€/i)
-
-  if(total1){
-    precio=cleanNumber(total1[1])
-  }
-
-  else if(total2){
-    precio=cleanNumber(total2[1])
+  for(const pattern of totalPatterns){
+    const match = text.match(pattern)
+    if(match){
+      precio = cleanNumber(match[1])
+      break
+    }
   }
 
   return {consumo,potencia,precio,dias}
