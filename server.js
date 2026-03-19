@@ -581,10 +581,8 @@ return res.json({
 
     }
 
-    return res.status(200).json({
-  reply: "No he recibido una factura válida."
-})
-}
+    
+
 
   catch(err){
 
