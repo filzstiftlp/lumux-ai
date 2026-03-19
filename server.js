@@ -376,15 +376,22 @@ if(!dias){
 
 function calcularAhorro(consumo,potencia,dias,precioActual){
 
-  const energia = consumo * 0.111
-  const potenciaCoste = potencia * dias * 0.17
+  // 🔹 ENERGÍA
+  const energia = consumo * 0.11
 
+  // 🔹 POTENCIA
+  const potenciaCoste = potencia * dias * 0.177
+
+  // 🔹 BASE
   let subtotal = energia + potenciaCoste
 
-  subtotal = subtotal * 1.0511269632
+  // 🔹 IMPUESTO ELÉCTRICO (5%)
+  subtotal = subtotal * 1.05
 
+  // 🔹 IVA (21%)
   const totalLumux = subtotal * 1.21
 
+  // 🔹 AHORRO
   const ahorroFactura = precioActual - totalLumux
   const ahorroAnual = ahorroFactura * 12
 
