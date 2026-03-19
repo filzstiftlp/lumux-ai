@@ -60,14 +60,16 @@ function extractCliente(text){
 
     // 🔹 NOMBRE: línea en mayúsculas con nombre real (2 o más palabras)
     if(
-      lineas[i].match(/^[A-ZÁÉÍÓÚÑ\s]{10,}$/) &&
-      lineas[i].includes(" ") &&
-      !lineas[i].includes("IBERDROLA") &&
-      !lineas[i].includes("CONTRATO") &&
-      !lineas[i].includes("FACTURA")
-    ){
-      nombre = lineas[i]
-    }
+  lineas[i].match(/^[A-ZÁÉÍÓÚÑ\s]{10,}$/) &&
+  lineas[i].includes(" ") &&
+  !lineas[i].includes("IBERDROLA") &&
+  !lineas[i].includes("CONTRATO") &&
+  !lineas[i].includes("FACTURA") &&
+  !lineas[i].includes("POTENCIA") &&
+  !lineas[i].includes("TITULAR")
+){
+  nombre = lineas[i].replace(/^H\s*/, "").trim()
+}
 
     // 🔹 DIRECCIÓN: detectamos inicio
     if(
@@ -76,6 +78,9 @@ function extractCliente(text){
     ){
 
       direccion = lineas[i]
+  .replace(/^H\s*/, "")
+  .replace(/titular potencia:/i, "")
+  .trim()
 
       // 🔥 añadimos siguiente línea (código postal + ciudad)
       if(lineas[i+1]){
@@ -541,8 +546,7 @@ if(isNaN(totalLumux) || isNaN(ahorroFactura) || isNaN(ahorroAnual)){
       if(ahorroFactura > 5){
 
   // 🔥 MENSAJE CON AHORRO
-  reply=`
-📍 ${nombreFinal}
+reply = `📍 ${nombreFinal}
 📍 ${direccionFinal}
 
 He analizado tu factura 🔎
@@ -560,8 +564,7 @@ ${totalLumux.toFixed(2)} €
 💰 Ahorro en esta factura: ${ahorroFactura.toFixed(2)} €
 💰 Ahorro anual estimado: ${ahorroAnual.toFixed(2)} €
 
-¿Quieres saber qué compañía puede aplicarte este ahorro?
-`
+¿Quieres saber qué compañía puede aplicarte este ahorro?`
 
 }else{
 
