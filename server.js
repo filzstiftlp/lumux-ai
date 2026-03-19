@@ -551,10 +551,11 @@ if(isNaN(totalLumux) || isNaN(ahorroFactura) || isNaN(ahorroAnual)){
       if(ahorroFactura > 5){
 
   // 🔥 MENSAJE CON AHORRO
-reply = `📍 ${nombreFinal}
+reply = `
+📍 ${nombreFinal}
 📍 ${direccionFinal}
 
-He analizado tu factura 🔎
+He analizado tu factura
 
 Consumo: ${consumo.toFixed(2)} kWh
 Potencia: ${potencia} kW
@@ -566,10 +567,11 @@ Con Lumux pagarías aproximadamente:
 
 ${totalLumux.toFixed(2)} €
 
-💰 Ahorro en esta factura: ${ahorroFactura.toFixed(2)} €
-💰 Ahorro anual estimado: ${ahorroAnual.toFixed(2)} €
+Ahorro factura: ${ahorroFactura.toFixed(2)} €
+Ahorro anual: ${ahorroAnual.toFixed(2)} €
 
-¿Quieres saber qué compañía puede aplicarte este ahorro?`
+¿Quieres saber qué compañía puede aplicarte este ahorro?
+`.replace(/\n/g, " ").trim()
 
 }else{
 
