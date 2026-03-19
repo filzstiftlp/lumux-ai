@@ -32,7 +32,7 @@ async function readImageOCR(url){
 
     const response = await axios.get(url,{responseType:"arraybuffer"})
 
-    const result = await Tesseract.recognize(
+    const text = "test rápido"(
   Buffer.from(response.data),
   "spa+eng",
   {
@@ -130,7 +130,7 @@ for(const file of files){
 
   const imageBuffer = fs.readFileSync(path.join(__dirname,file))
 
-  const result = await Tesseract.recognize(
+  const text = "test rápido"(
     imageBuffer,
     "spa+eng",
     {
