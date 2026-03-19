@@ -51,29 +51,46 @@ async function readImageOCR(url){
 }
 function extractCliente(text){
 
-  const lineas = text.split("\n")
+  const lineas = text.split("\n").map(l => l.trim()).filter(l => l.length > 0)
 
   let nombre = ""
   let direccion = ""
 
-  for(let i=0;i<lineas.length;i++){
+  for(let i = 0; i < lineas.length; i++){
 
+    // 🔹 NOMBRE: línea en mayúsculas con nombre real (2 o más palabras)
     if(
-  lineas[i].match(/^[A-Z\s]{5,}$/)
-){
-  nombre = lineas[i].trim()
-}
-    if(
-      lineas[i].includes("direccion") ||
-      lineas[i].includes("prje") ||
-      lineas[i].includes("calle")
+      lineas[i].match(/^[A-ZÁÉÍÓÚÑ\s]{10,}$/) &&
+      lineas[i].includes(" ") &&
+      !lineas[i].includes("IBERDROLA") &&
+      !lineas[i].includes("CONTRATO") &&
+      !lineas[i].includes("FACTURA")
     ){
-      direccion = lineas[i].trim()
+      nombre = lineas[i]
+    }
+
+    // 🔹 DIRECCIÓN: detectamos inicio
+    if(
+      lineas[i].toLowerCase().includes("prje") ||
+      lineas[i].toLowerCase().includes("calle")
+    ){
+
+      direccion = lineas[i]
+
+      // 🔥 añadimos siguiente línea (código postal + ciudad)
+      if(lineas[i+1]){
+        direccion += " " + lineas[i+1]
+      }
+
+      break
     }
 
   }
 
-  return {nombre,direccion}
+  return {
+    nombre: nombre || "Cliente",
+    direccion: direccion || "Dirección no disponible"
+  }
 }
 /* OCR PDF */
 
