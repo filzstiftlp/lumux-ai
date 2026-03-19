@@ -492,15 +492,12 @@ console.log("ANTES DEL IF CRÍTICO:", {
   potencia === null || isNaN(potencia) ||
   dias === null || isNaN(dias)
 ){
-  console.log("⚠️ DATOS INCOMPLETOS, PERO CONTINUAMOS")
+  console.log("⚠️ DATOS INCOMPLETOS")
 
-  // 🔥 NO cortamos aquí
-}if(!consumo || !precio){
   return res.json({
     reply:"No he podido analizar bien la factura. ¿Puedes enviarla de nuevo?"
   })
 }
-console.log("RESPUESTA ENVIADA A MANYCHAT:", reply)
 
 }
 
@@ -581,7 +578,7 @@ Te avisaremos si detectamos una bajada de precios que pueda beneficiarte.
   ahorroFactura,
   ahorroAnual
 })
-
+console.log("RESPUESTA ENVIADA A MANYCHAT:", reply)
       return res.json({reply})
 
     }
