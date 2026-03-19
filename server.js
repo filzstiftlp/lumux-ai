@@ -603,6 +603,7 @@ Te avisaremos si detectamos una bajada de precios que pueda beneficiarte.
 })
 console.log("RESPUESTA ENVIADA A MANYCHAT:", reply)
       return res.status(200).json({
+  success: true,
   reply: String(reply)
 })
 
