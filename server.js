@@ -493,9 +493,10 @@ if(isNaN(totalLumux) || isNaN(ahorroFactura) || isNaN(ahorroAnual)){
 
       let reply=""
 
-      if(ahorroAnual <= 40){
+      if(ahorroAnual > 40){
 
-        reply=`
+  // 🔥 MENSAJE CON AHORRO
+  reply=`
 📍 ${nombre}
 📍 ${direccion}
 
@@ -517,9 +518,13 @@ ${totalLumux.toFixed(2)} €
 ¿Quieres saber qué compañía puede aplicarte este ahorro?
 `
 
-      }else{
+}else{
 
-        reply=`
+  // 🔹 MENSAJE SIN AHORRO
+  reply=`
+📍 ${nombre}
+📍 ${direccion}
+
 He analizado tu factura 🔎
 
 Consumo: ${consumo.toFixed(2)} kWh
@@ -528,17 +533,12 @@ Periodo: ${dias} días
 
 Total factura actual: ${precio.toFixed(2)} €
 
-Con Lumux pagarías aproximadamente:
+Actualmente tu tarifa ya está bastante optimizada.
 
-${totalLumux.toFixed(2)} €
-
-💰 Ahorro en esta factura: ${ahorroFactura.toFixed(2)} €
-💰 Ahorro anual estimado: ${ahorroAnual.toFixed(2)} €
-
-¿Quieres saber qué compañía puede aplicarte este ahorro?
+Te avisaremos si detectamos una bajada de precios que pueda beneficiarte.
 `
 
-      }
+}
       console.log("CALCULO FINAL:", {
   consumo,
   potencia,
