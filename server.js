@@ -494,6 +494,15 @@ ${totalLumux.toFixed(2)} €
 `
 
       }
+      console.log("CALCULO FINAL:", {
+  consumo,
+  potencia,
+  dias,
+  precio,
+  totalLumux,
+  ahorroFactura,
+  ahorroAnual
+})
 
       return res.json({reply})
 
