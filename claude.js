@@ -45,33 +45,41 @@ async function analizarFactura(base64Data, mediaType) {
         },
         {
           type: 'text',
-          text: `Analiza esta factura de luz española y extrae los datos en formato JSON.
-Devuelve SOLO el JSON, sin texto adicional, con esta estructura:
+          text: `Analiza esta factura española y extrae los datos en formato JSON.
+Devuelve SOLO el JSON, sin texto adicional:
 {
+  "tipo_suministro": "luz" o "gas",
   "compania": "nombre de la compañía",
   "fecha_factura": "YYYY-MM-DD",
   "dias_facturacion": número,
-  "consumo_kwh": número (total consumo),
-  "consumo_p1_kwh": número o null (consumo punta),
-  "consumo_p2_kwh": número o null (consumo llano),
-  "consumo_p3_kwh": número o null (consumo valle),
+  "consumo_kwh": número,
+  "consumo_p1_kwh": número o null,
+  "consumo_p2_kwh": número o null,
+  "consumo_p3_kwh": número o null,
   "potencia_kw": número,
-  "precio_kwh": número (precio medio €/kWh),
-  "precio_potencia": número (€/kW/día),
+  "precio_kwh": número,
+  "precio_potencia": número,
   "precio_total": número,
-  "cups": "código CUPS si aparece o null",
+  "cups": "código CUPS o null",
+  "tiene_autoconsumo": true o false,
   "tiene_bateria_virtual": true o false,
-  "excedentes_kwh": número o null (kWh exportados si tiene batería virtual),
+  "excedentes_kwh": número o null,
   "compensacion_excedentes_importe": número o null,
   "tipo_tarifa": "2.0TD" o "3.0TD",
+  "precio_fijo_mes": número o null,
+  "consumo_anual_estimado": número o null,
   "items": [
     { "concepto": "Energía", "importe": número },
     { "concepto": "Potencia", "importe": número },
     { "concepto": "Impuesto eléctrico", "importe": número }
   ]
 }
-Si algún dato no aparece en la factura, pon null.
-Para batería virtual: busca conceptos como "compensación excedentes", "batería virtual", "solar cloud", "energía exportada".`
+IMPORTANTE:
+- tipo_suministro: "gas" si ves gas natural, "luz" si es electricidad
+- tiene_autoconsumo: true si hay paneles solares, compensación excedentes, energía exportada, solar cloud, batería virtual, o cualquier referencia a autoconsumo o generación propia
+- tiene_bateria_virtual: true SOLO si el producto se llama explícitamente "batería virtual", "solar cloud" o similar
+- excedentes_kwh: kWh exportados a la red si aparecen
+- Si algún dato no aparece, pon null`
         }
       ]
     }]
@@ -99,38 +107,36 @@ async function generarComparativa(datosFactura, tarifas) {
   let mejorAhorro = 0;
 
   for (const tarifa of tarifas) {
-    // Si tiene batería virtual, solo comparar con tarifas que la incluyan
-    if (datosFactura.tiene_bateria_virtual && !tarifa.bateria_virtual) continue;
-
-    // Calcular coste con esta tarifa
-    let costeEnergia;
-    if (datosFactura.consumo_p1_kwh && tarifa.precio_kwh_p1) {
-      // Cálculo detallado por periodos
-      const p1 = (datosFactura.consumo_p1_kwh / (datosFactura.dias_facturacion || 30) * diasMes);
-      const p2 = (datosFactura.consumo_p2_kwh / (datosFactura.dias_facturacion || 30) * diasMes);
-      const p3 = (datosFactura.consumo_p3_kwh / (datosFactura.dias_facturacion || 30) * diasMes);
-      costeEnergia = (p1 * tarifa.precio_kwh_p1) + (p2 * (tarifa.precio_kwh_p2 || tarifa.precio_kwh_p1)) + (p3 * (tarifa.precio_kwh_p3 || tarifa.precio_kwh_p1));
-    } else {
-      costeEnergia = tarifa.precio_kwh * consumoMensual;
-    }
-
-    const costePotencia = (tarifa.precio_kw_p1 || tarifa.precio_kw) * potencia * diasMes;
-
-    // Descuento por batería virtual
-    let descuentoBateria = 0;
-    if (tarifa.bateria_virtual && tarifa.compensacion_excedentes && excedentes > 0) {
-      const excedentesMensuales = excedentes / (datosFactura.dias_facturacion || 30) * diasMes;
-      descuentoBateria = excedentesMensuales * tarifa.compensacion_excedentes;
-    }
-
-    const costeTarifa = costeEnergia + costePotencia - descuentoBateria;
-    const ahorro = costeActual - costeTarifa;
-
-    if (ahorro > mejorAhorro) {
-      mejorAhorro = ahorro;
-      mejorTarifa = { ...tarifa, ahorro, costeMensual: costeTarifa };
-    }
+  let costeEnergia;
+  if (datosFactura.consumo_p1_kwh && tarifa.precio_kwh_p1) {
+    const p1 = (datosFactura.consumo_p1_kwh / (datosFactura.dias_facturacion || 30) * diasMes);
+    const p2 = (datosFactura.consumo_p2_kwh / (datosFactura.dias_facturacion || 30) * diasMes);
+    const p3 = (datosFactura.consumo_p3_kwh / (datosFactura.dias_facturacion || 30) * diasMes);
+    costeEnergia = (p1 * tarifa.precio_kwh_p1) +
+                   (p2 * (tarifa.precio_kwh_p2 || tarifa.precio_kwh_p1)) +
+                   (p3 * (tarifa.precio_kwh_p3 || tarifa.precio_kwh_p1));
+  } else {
+    costeEnergia = tarifa.precio_kwh * consumoMensual;
   }
+
+  const costePotencia = (tarifa.precio_kw_p1 || tarifa.precio_kw) * potencia * diasMes;
+
+  // Compensación excedentes: si la tarifa la incluye, usamos su precio; si no, usamos 0.06 por defecto
+  let descuentoExcedentes = 0;
+  if ((datosFactura.tiene_autoconsumo || datosFactura.tiene_bateria_virtual) && excedentes > 0) {
+    const excedentesMensuales = excedentes / (datosFactura.dias_facturacion || 30) * diasMes;
+    const precioCompensacion = tarifa.compensacion_excedentes || 0.06;
+    descuentoExcedentes = excedentesMensuales * precioCompensacion;
+  }
+
+  const costeTarifa = costeEnergia + costePotencia - descuentoExcedentes;
+  const ahorro = costeActual - costeTarifa;
+
+  if (ahorro > mejorAhorro) {
+    mejorAhorro = ahorro;
+    mejorTarifa = { ...tarifa, ahorro, costeMensual: costeTarifa };
+  }
+}
 
   if (!mejorTarifa || mejorAhorro <= 0) {
     return { 
@@ -154,5 +160,84 @@ Con ${mejorTarifa.compania} (${mejorTarifa.nombre_tarifa}) podrías ahorrar:
 
   return { mensaje, ahorro: parseFloat(ahorroAnual), tarifa: mejorTarifa };
 }
+async function analizarFacturaGas(base64Data, mediaType) {
+  const response = await client.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 2048,
+    messages: [{
+      role: 'user',
+      content: [
+        {
+          type: 'image',
+          source: { type: 'base64', media_type: mediaType, data: base64Data }
+        },
+        {
+          type: 'text',
+          text: `Analiza esta factura de GAS española y extrae los datos en formato JSON.
+Devuelve SOLO el JSON, sin texto adicional:
+{
+  "tipo_suministro": "gas",
+  "compania": "nombre de la compañía",
+  "fecha_factura": "YYYY-MM-DD",
+  "dias_facturacion": número,
+  "consumo_kwh": número,
+  "precio_kwh": número,
+  "precio_fijo_mes": número,
+  "precio_total": número,
+  "cups": "código CUPS si aparece o null",
+  "consumo_anual_estimado": número o null
+}
+Si algún dato no aparece, pon null.`
+        }
+      ]
+    }]
+  });
 
-module.exports = { responderMensaje, analizarFactura, generarComparativa };
+  try {
+    return JSON.parse(response.content[0].text);
+  } catch (e) {
+    console.error('Error parseando factura gas:', e);
+    return null;
+  }
+}
+
+function determinarSegmentoGas(consumoAnualKwh) {
+  if (!consumoAnualKwh || consumoAnualKwh <= 5000) return 'RL.1';
+  if (consumoAnualKwh <= 15000) return 'RL.2';
+  return 'RL.3';
+}
+
+async function generarComparativaGas(datosFactura, tarifasGas) {
+  const diasMes = 30;
+  const consumoMensual = datosFactura.consumo_kwh / (datosFactura.dias_facturacion || 30) * diasMes;
+  const consumoAnualEstimado = datosFactura.consumo_anual_estimado || (consumoMensual * 12);
+  const segmento = determinarSegmentoGas(consumoAnualEstimado);
+
+  const tarifaCorrecta = tarifasGas.find(t => t.segmento === segmento);
+  if (!tarifaCorrecta) return { mensaje: 'No hemos encontrado una tarifa de gas adecuada.', ahorro: 0, tarifa: null };
+
+  const costeActual = (datosFactura.precio_kwh * consumoMensual) + (datosFactura.precio_fijo_mes || 0);
+  const costeNuevo = (tarifaCorrecta.precio_kwh * consumoMensual) + tarifaCorrecta.precio_fijo_mes;
+  const ahorroMensual = costeActual - costeNuevo;
+
+  if (ahorroMensual <= 0) {
+    return { mensaje: '✅ Ya tienes una tarifa de gas muy competitiva.', ahorro: 0, tarifa: null };
+  }
+
+  const ahorroAnual = (ahorroMensual * 12).toFixed(2);
+  const mensaje = `💡 Hemos analizado tu factura de gas de ${datosFactura.compania || 'tu compañía'}.
+
+Con Gana Energía (${tarifaCorrecta.nombre_tarifa}) podrías ahorrar:
+💰 ~${ahorroAnual}€ al año
+
+¿Quieres ver la comparativa completa?`;
+
+  return { mensaje, ahorro: parseFloat(ahorroAnual), tarifa: tarifaCorrecta };
+}
+module.exports = { 
+  responderMensaje, 
+  analizarFactura, 
+  generarComparativa,
+  analizarFacturaGas,
+  generarComparativaGas
+};
