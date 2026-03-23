@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
+const FormData = require('form-data');
 const db = require('./db');
 const { responderMensaje, analizarFactura, generarComparativa, analizarFacturaGas, generarComparativaGas } = require('./claude');
 
@@ -55,15 +56,30 @@ async function enviarMensajeChatwoot(conversationId, mensaje, esBot = false) {
       ? { content: `🤖 ${mensaje}`, message_type: 'outgoing', private: true }
       : { content: mensaje, message_type: 'incoming' };
 
-    console.log('Chatwoot payload:', JSON.stringify(payload));
-    const res = await axios.post(
+    await axios.post(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations/${conversationId}/messages`,
       payload,
       { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
     );
-    console.log('Chatwoot response:', res.status, JSON.stringify(res.data).slice(0, 200));
   } catch (e) {
     console.error('Chatwoot message error:', e.message, e.response?.data);
+  }
+}
+
+async function enviarArchivoChatwoot(conversationId, fileBuffer, fileName, mimeType) {
+  try {
+    const form = new FormData();
+    form.append('attachments[]', fileBuffer, { filename: fileName, contentType: mimeType });
+    form.append('message_type', 'incoming');
+    form.append('content', '');
+
+    await axios.post(
+      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations/${conversationId}/messages`,
+      form,
+      { headers: { ...form.getHeaders(), api_access_token: process.env.CHATWOOT_API_TOKEN } }
+    );
+  } catch (e) {
+    console.error('Chatwoot file error:', e.message, e.response?.data);
   }
 }
 
@@ -171,17 +187,22 @@ router.post('/whatsapp', async (req, res) => {
     const from = msg.from;
     const nombre = value?.contacts?.[0]?.profile?.name || '';
 
-    // Ignorar mensajes enviados por el propio bot (evita bucles)
     if (from === process.env.WHATSAPP_PHONE_ID) return;
 
-    let tipo = 'texto', mensajeTexto = '', archivoUrl = null, mediaType = null;
+    let tipo = 'texto', mensajeTexto = '', archivoUrl = null, mediaType = null, fileName = null;
 
     if (msg.type === 'text') {
       mensajeTexto = msg.text.body;
     } else if (msg.type === 'image') {
-      tipo = 'imagen'; archivoUrl = await getMediaUrl(msg.image.id); mediaType = 'image/jpeg';
+      tipo = 'imagen';
+      archivoUrl = await getMediaUrl(msg.image.id);
+      mediaType = msg.image.mime_type || 'image/jpeg';
+      fileName = `factura_${Date.now()}.jpg`;
     } else if (msg.type === 'document') {
-      tipo = 'archivo'; archivoUrl = await getMediaUrl(msg.document.id); mediaType = msg.document.mime_type || 'application/pdf';
+      tipo = 'archivo';
+      archivoUrl = await getMediaUrl(msg.document.id);
+      mediaType = msg.document.mime_type || 'application/pdf';
+      fileName = msg.document.filename || `factura_${Date.now()}.pdf`;
     } else return;
 
     const usuario = await db.getOrCreateUsuario(from, { nombre, telefono: from, canal: 'whatsapp' });
@@ -194,9 +215,6 @@ router.post('/whatsapp', async (req, res) => {
       const contactId = await getChatwootContactId(from, nombre);
       if (contactId) {
         chatwootConvId = await getChatwootConversationId(contactId);
-        if (chatwootConvId) {
-          await enviarMensajeChatwoot(chatwootConvId, tipo === 'texto' ? mensajeTexto : '[Factura enviada 📄]', false);
-        }
       }
     }
 
@@ -204,11 +222,19 @@ router.post('/whatsapp', async (req, res) => {
       await db.guardarMensaje(usuario.id, 'user', '[Factura enviada]', { archivoUrl });
       await enviarMensajeWhatsApp(from, '⏳ Estoy analizando tu factura, dame un momento...');
 
+      // Descargar el archivo
       const imageResponse = await axios.get(archivoUrl, {
         responseType: 'arraybuffer',
         headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` }
       });
-      const base64 = Buffer.from(imageResponse.data).toString('base64');
+      const fileBuffer = Buffer.from(imageResponse.data);
+      const base64 = fileBuffer.toString('base64');
+
+      // Enviar el archivo real a Chatwoot
+      if (chatwootConvId) {
+        await enviarArchivoChatwoot(chatwootConvId, fileBuffer, fileName, mediaType);
+      }
+
       const datosFactura = await analizarFactura(base64, mediaType);
 
       if (datosFactura) {
@@ -240,12 +266,17 @@ router.post('/whatsapp', async (req, res) => {
     } else {
       await db.guardarMensaje(usuario.id, 'user', mensajeTexto);
       respuesta = await responderMensaje(historial, mensajeTexto);
+
+      // Enviar texto del cliente a Chatwoot
+      if (chatwootConvId) {
+        await enviarMensajeChatwoot(chatwootConvId, mensajeTexto, false);
+      }
     }
 
     await db.guardarMensaje(usuario.id, 'assistant', respuesta, metadata);
     await enviarMensajeWhatsApp(from, respuesta);
 
-    // ── Chatwoot: registrar respuesta del bot como nota privada ──
+    // Registrar respuesta del bot como nota privada en Chatwoot
     if (chatwootConvId) {
       await enviarMensajeChatwoot(chatwootConvId, respuesta, true);
     }
