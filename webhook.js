@@ -28,17 +28,18 @@ async function getChatwootContactId(phone, nombre) {
 
 async function getChatwootConversationId(contactId) {
   try {
+    const inboxId = process.env.CHATWOOT_INBOX_ID || '2';
     const convsRes = await axios.get(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts/${contactId}/conversations`,
       { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
     );
     const convs = convsRes.data?.payload || [];
-    const open = convs.find(c => c.status === 'open');
+    const open = convs.find(c => c.status === 'open' && String(c.inbox_id) === String(inboxId));
     if (open) return open.id;
 
     const createRes = await axios.post(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations`,
-      { inbox_id: 1, contact_id: contactId },
+      { inbox_id: parseInt(inboxId), contact_id: contactId },
       { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
     );
     return createRes.data?.id || createRes.data?.payload?.id;
