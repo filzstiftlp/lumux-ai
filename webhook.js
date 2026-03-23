@@ -54,13 +54,15 @@ async function enviarMensajeChatwoot(conversationId, mensaje, esBot = false) {
       ? { content: `🤖 ${mensaje}`, message_type: 'outgoing', private: true }
       : { content: mensaje, message_type: 'incoming' };
 
-    await axios.post(
+    console.log('Chatwoot payload:', JSON.stringify(payload));
+    const res = await axios.post(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations/${conversationId}/messages`,
       payload,
       { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
     );
+    console.log('Chatwoot response:', res.status, JSON.stringify(res.data).slice(0, 200));
   } catch (e) {
-    console.error('Chatwoot message error:', e.message);
+    console.error('Chatwoot message error:', e.message, e.response?.data);
   }
 }
 
