@@ -125,6 +125,28 @@ router.post('/manychat', async (req, res) => {
   }
 });
 
+// ─── CHATWOOT → WHATSAPP ─────────────────────────────────
+router.post('/chatwoot', async (req, res) => {
+  try {
+    res.status(200).send('OK');
+    const { event, message_type, content, conversation } = req.body;
+    const isPrivate = req.body.private;
+
+    if (event !== 'message_created') return;
+    if (message_type !== 'outgoing') return;
+    if (isPrivate) return;
+
+    const phone = conversation?.meta?.sender?.phone_number?.replace('+', '');
+    if (!phone || !content) return;
+
+    await enviarMensajeWhatsApp(phone, content);
+    console.log(`Agente → WhatsApp ${phone}: ${content}`);
+
+  } catch (error) {
+    console.error('Error en webhook Chatwoot:', error);
+  }
+});
+
 // ─── WHATSAPP DIRECTO ────────────────────────────────────
 router.get('/whatsapp', (req, res) => {
   const mode = req.query['hub.mode'];
