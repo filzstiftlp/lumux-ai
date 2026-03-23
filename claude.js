@@ -75,7 +75,8 @@ CAMPOS REQUERIDOS:
   "precio_kwh_p1": precio €/kWh del periodo P1 o null,
   "precio_kwh_p2": precio €/kWh del periodo P2 o null,
   "precio_kwh_p3": precio €/kWh del periodo P3 o null,
-  "precio_potencia_dia": precio €/kW/día de potencia (NO el importe total, sino el precio unitario diario),
+  "precio_potencia_dia": precio €/kW/día de potencia P1 (precio unitario, NO importe total),
+  "precio_potencia_dia_p2": precio €/kW/día de potencia P2 o null,
   "importe_energia": importe total en € solo de energía (sin impuestos ni potencia),
   "importe_potencia": importe total en € solo de potencia (sin impuestos),
   "precio_total": importe TOTAL a pagar en € (con todos los impuestos incluidos),
@@ -92,7 +93,7 @@ CAMPOS REQUERIDOS:
 REGLAS IMPORTANTES:
 - consumo_kwh: SIEMPRE suma P1+P2+P3 si hay periodos. Ejemplo: 298+205+367 = 870 kWh
 - precio_kwh: DIVIDE importe_energia / consumo_kwh. NO uses precios de líneas individuales
-- precio_potencia_dia: es el precio UNITARIO €/kW/día (ej: 0.097), NO el importe total (ej: NO pongas 18.56)
+- precio_potencia_dia: es el precio UNITARIO €/kW/día (ej: 0.097), NO el importe total
 - precio_total: el importe final total de la factura incluyendo IVA e impuestos
 - Si no aparece un dato, pon null`
         }
@@ -108,52 +109,84 @@ REGLAS IMPORTANTES:
   }
 }
 
+// ─── COMPARATIVA DE LUZ (con datos reales + orden por comisión) ───────────────
 async function generarComparativa(datosFactura, tarifas) {
   const diasFactura = datosFactura.dias_facturacion || 30;
-  const diasMes = 30;
-  const factor = diasMes / diasFactura;
+  const factor = 30 / diasFactura; // Normalizar a 30 días
 
-  // Usar precio_total real como base del coste actual (normalizado a 30 días)
-  // Excluimos impuestos aproximadamente (IVA 21% + IE 5.11% ≈ 26%)
+  const consumoTotal = datosFactura.consumo_kwh || 0;
+  const consumoP1    = datosFactura.consumo_p1_kwh || 0;
+  const consumoP2    = datosFactura.consumo_p2_kwh || 0;
+  const consumoP3    = datosFactura.consumo_p3_kwh || 0;
+  const potencia     = datosFactura.potencia_kw || 4.4;
+  const tieneTriperiodo = consumoP1 > 0 || consumoP2 > 0 || consumoP3 > 0;
+
+  // Coste actual real normalizado a 30 días (sin impuestos: IVA 21% + IE 5.11% ≈ x1.2611)
   const precioTotalSinImpuestos = datosFactura.precio_total / 1.2611;
   const costeActualMes = precioTotalSinImpuestos * factor;
 
-  const consumoMensual = datosFactura.consumo_kwh * factor;
-  const potencia = datosFactura.potencia_kw || 4.4;
-  const excedentes = datosFactura.excedentes_kwh || 0;
-
+  // Las tarifas ya vienen ordenadas por orden_comision ASC desde la query
+  // Buscamos la primera (mayor comisión) que produzca ahorro real para el cliente
   let mejorTarifa = null;
   let mejorAhorro = 0;
+  let mejorCoste = 0;
 
-  for (const tarifa of tarifas) {
-    let costeEnergia;
+  // Filtrar tarifas por potencia del cliente
+  const tarifasFiltradas = tarifas.filter(t => {
+    const minKw = t.potencia_min_kw || 0;
+    const maxKw = t.potencia_max_kw || 15;
+    return potencia >= minKw && potencia <= maxKw;
+  });
 
-    if (datosFactura.consumo_p1_kwh && tarifa.precio_kwh_p1) {
-      const p1 = datosFactura.consumo_p1_kwh * factor;
-      const p2 = (datosFactura.consumo_p2_kwh || 0) * factor;
-      const p3 = (datosFactura.consumo_p3_kwh || 0) * factor;
-      costeEnergia = (p1 * tarifa.precio_kwh_p1) +
-                     (p2 * (tarifa.precio_kwh_p2 || tarifa.precio_kwh_p1)) +
-                     (p3 * (tarifa.precio_kwh_p3 || tarifa.precio_kwh_p1));
+  for (const tarifa of tarifasFiltradas) {
+    // ── Calcular coste energía con precios REALES de la tarifa ──
+    let costeEnergia = 0;
+
+    if (tieneTriperiodo && tarifa.precio_kwh_p1) {
+      // Usar consumos reales por periodo
+      const p1Mes = consumoP1 * factor;
+      const p2Mes = consumoP2 * factor;
+      const p3Mes = consumoP3 * factor;
+      costeEnergia =
+        (p1Mes * tarifa.precio_kwh_p1) +
+        (p2Mes * (tarifa.precio_kwh_p2 || tarifa.precio_kwh_p1)) +
+        (p3Mes * (tarifa.precio_kwh_p3 || tarifa.precio_kwh_p1));
     } else {
-      costeEnergia = (tarifa.precio_kwh || 0) * consumoMensual;
+      // Tarifa plana o no tenemos desglose por periodos
+      const consumoMes = consumoTotal * factor;
+      costeEnergia = consumoMes * (tarifa.precio_kwh_p1 || tarifa.precio_kwh || 0);
     }
 
-    const costePotencia = (tarifa.precio_kw_p1 || tarifa.precio_kw || 0) * potencia * diasMes;
+    // ── Calcular coste potencia con precios REALES ──
+    const costePotencia =
+      (tarifa.precio_kw_p1 || tarifa.precio_kw || 0) * potencia * 30;
 
-    let descuentoExcedentes = 0;
-    if ((datosFactura.tiene_autoconsumo || datosFactura.tiene_bateria_virtual) && excedentes > 0) {
-      const excedentesMensuales = excedentes * factor;
-      const precioCompensacion = tarifa.compensacion_excedentes || 0.06;
-      descuentoExcedentes = excedentesMensuales * precioCompensacion;
+    // ── Coste fijo mensual (mantenimiento, etc.) ──
+    const costeFijo = tarifa.precio_fijo_mes || 0;
+
+    // ── Descuento batería virtual si aplica ──
+    let descuentoBV = 0;
+    if ((datosFactura.tiene_autoconsumo || datosFactura.tiene_bateria_virtual) &&
+        datosFactura.excedentes_kwh > 0 && tarifa.bateria_virtual) {
+      const excedentesMes = datosFactura.excedentes_kwh * factor;
+      descuentoBV = excedentesMes * (tarifa.compensacion_excedentes || 0.06);
     }
 
-    const costeTarifa = costeEnergia + costePotencia - descuentoExcedentes;
+    const costeTarifa = costeEnergia + costePotencia + costeFijo - descuentoBV;
     const ahorro = costeActualMes - costeTarifa;
 
-    if (ahorro > mejorAhorro) {
+    // Tomamos la primera tarifa (mayor comisión) que genere ahorro > 3€/mes
+    if (ahorro > 3 && mejorTarifa === null) {
+      mejorTarifa = tarifa;
       mejorAhorro = ahorro;
-      mejorTarifa = { ...tarifa, ahorro, costeMensual: costeTarifa };
+      mejorCoste = costeTarifa;
+    }
+
+    // Si ninguna con comisión alta ahorra, guardamos la que más ahorra
+    if (ahorro > mejorAhorro && mejorTarifa === null) {
+      mejorAhorro = ahorro;
+      mejorCoste = costeTarifa;
+      mejorTarifa = tarifa;
     }
   }
 
@@ -161,25 +194,81 @@ async function generarComparativa(datosFactura, tarifas) {
     return {
       mensaje: '✅ Ya tienes una tarifa muy competitiva. ¡Estás pagando un precio justo!',
       ahorro: 0,
-      tarifa: null
+      tarifa: null,
+      datosComparativa: null
     };
   }
 
-  const ahorroAnual = (mejorAhorro * 12).toFixed(2);
+  const ahorroAnual = parseFloat((mejorAhorro * 12).toFixed(2));
+  const precioNuevoMes = parseFloat(mejorCoste.toFixed(2));
+  const precioActualAnual = parseFloat((costeActualMes * 12).toFixed(2));
+  const pctAhorro = Math.round((mejorAhorro / costeActualMes) * 100);
+
   let mensaje = `💡 ¡Buenas noticias! Hemos analizado tu factura de ${datosFactura.compania || 'tu compañía'}.
 
-Con ${mejorTarifa.compania} (${mejorTarifa.nombre_tarifa}) podrías ahorrar:
-💰 ~${ahorroAnual}€ al año`;
+Con ${mejorTarifa.compania} podrías ahorrar:
+💰 ~${ahorroAnual}€ al año (${pctAhorro}% menos)`;
 
   if (mejorTarifa.bateria_virtual) {
     mensaje += `\n⚡ Incluye batería virtual con compensación a ${mejorTarifa.compensacion_excedentes}€/kWh`;
   }
 
-  mensaje += `\n\n¿Quieres ver la comparativa completa?`;
+  mensaje += `\n\n👇 Tu informe personalizado:`;
 
-  return { mensaje, ahorro: parseFloat(ahorroAnual), tarifa: mejorTarifa };
+  return {
+    mensaje,
+    ahorro: ahorroAnual,
+    tarifa: mejorTarifa,
+    datosComparativa: {
+      precio_actual_mes: parseFloat(costeActualMes.toFixed(2)),
+      precio_nuevo_mes: precioNuevoMes,
+      precio_actual_anual: precioActualAnual,
+      precio_nuevo_anual: parseFloat((precioNuevoMes * 12).toFixed(2)),
+      ahorro_anual: ahorroAnual,
+      pct_ahorro: pctAhorro,
+      consumo_p1: consumoP1,
+      consumo_p2: consumoP2,
+      consumo_p3: consumoP3,
+      consumo_total: consumoTotal,
+      dias: diasFactura,
+      potencia,
+    }
+  };
 }
 
+// ─── GENERAR URL DEL INFORME ──────────────────────────────────────────────────
+function generarUrlInforme(nombre, telefono, datosFactura, comparativa) {
+  const base = process.env.WEB_URL || 'https://lumux.es';
+  const t = comparativa.tarifa;
+  const d = comparativa.datosComparativa;
+
+  const params = new URLSearchParams({
+    nombre:            nombre || '',
+    compania:          datosFactura.compania || '',
+    nueva_compania:    t.compania,
+    nueva_tarifa:      t.nombre_tarifa,
+    precio_actual:     d.precio_actual_mes,
+    precio_nuevo_mes:  d.precio_nuevo_mes,
+    ahorro_anual:      d.ahorro_anual,
+    consumo:           d.consumo_total,
+    consumo_p1:        d.consumo_p1,
+    consumo_p2:        d.consumo_p2,
+    consumo_p3:        d.consumo_p3,
+    potencia:          d.potencia,
+    dias:              d.dias,
+    precio_kwh_p1:     t.precio_kwh_p1 || '',
+    precio_kwh_p2:     t.precio_kwh_p2 || '',
+    precio_kwh_p3:     t.precio_kwh_p3 || '',
+    pot_p1:            t.precio_kw_p1 || '',
+    pot_p2:            t.precio_kw_p2 || '',
+    wa:                telefono || process.env.WHATSAPP_PHONE_NUMBER || '955209158',
+    url_contrato:      `${base}/contrato.html`,
+  });
+
+  return `${base}/informe.html?${params.toString()}`;
+}
+
+// ─── ANÁLISIS DE FACTURA DE GAS ───────────────────────────────────────────────
 async function analizarFacturaGas(base64Data, mediaType) {
   const imageContent = buildImageContent(base64Data, mediaType);
 
@@ -228,14 +317,12 @@ function determinarSegmentoGas(consumoAnualKwh) {
 
 async function generarComparativaGas(datosFactura, tarifasGas) {
   const diasFactura = datosFactura.dias_facturacion || 30;
-  const diasMes = 30;
-  const factor = diasMes / diasFactura;
+  const factor = 30 / diasFactura;
 
   const consumoMensual = datosFactura.consumo_kwh * factor;
   const consumoAnualEstimado = datosFactura.consumo_anual_estimado || (consumoMensual * 12);
   const segmento = determinarSegmentoGas(consumoAnualEstimado);
 
-  // Coste actual normalizado desde precio_total real
   const precioTotalSinIVA = datosFactura.precio_total / 1.21;
   const costeActualMes = precioTotalSinIVA * factor;
 
@@ -249,7 +336,7 @@ async function generarComparativaGas(datosFactura, tarifasGas) {
     return { mensaje: '✅ Ya tienes una tarifa de gas muy competitiva.', ahorro: 0, tarifa: null };
   }
 
-  const ahorroAnual = (ahorroMensual * 12).toFixed(2);
+  const ahorroAnual = parseFloat((ahorroMensual * 12).toFixed(2));
   const mensaje = `💡 Hemos analizado tu factura de gas de ${datosFactura.compania || 'tu compañía'}.
 
 Con Gana Energía (${tarifaCorrecta.nombre_tarifa}) podrías ahorrar:
@@ -257,13 +344,14 @@ Con Gana Energía (${tarifaCorrecta.nombre_tarifa}) podrías ahorrar:
 
 ¿Quieres ver la comparativa completa?`;
 
-  return { mensaje, ahorro: parseFloat(ahorroAnual), tarifa: tarifaCorrecta };
+  return { mensaje, ahorro: ahorroAnual, tarifa: tarifaCorrecta };
 }
 
 module.exports = {
   responderMensaje,
   analizarFactura,
   generarComparativa,
+  generarUrlInforme,
   analizarFacturaGas,
   generarComparativaGas
 };
