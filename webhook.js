@@ -50,14 +50,13 @@ async function getChatwootConversationId(contactId) {
 
 async function enviarMensajeChatwoot(conversationId, mensaje, esBot = false) {
   try {
+    const payload = esBot
+      ? { content: `🤖 ${mensaje}`, message_type: 'outgoing', private: true }
+      : { content: mensaje, message_type: 'incoming' };
+
     await axios.post(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations/${conversationId}/messages`,
-      {
-        content: esBot ? `🤖 ${mensaje}` : mensaje,
-        message_type: esBot ? 'outgoing' : 'incoming',
-        // Bot messages are private notes so Chatwoot doesn't re-send via WhatsApp
-        private: esBot ? true : false
-      },
+      payload,
       { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
     );
   } catch (e) {
