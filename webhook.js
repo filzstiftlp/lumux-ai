@@ -4,6 +4,62 @@ const axios = require('axios');
 const db = require('./db');
 const { responderMensaje, analizarFactura, generarComparativa, analizarFacturaGas, generarComparativaGas } = require('./claude');
 
+// ─── CHATWOOT HELPERS ────────────────────────────────────
+async function getChatwootContactId(phone, nombre) {
+  try {
+    const searchRes = await axios.get(
+      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts/search?q=${phone}`,
+      { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
+    );
+    const contacts = searchRes.data?.payload?.contacts || searchRes.data?.payload || [];
+    if (contacts.length > 0) return contacts[0].id;
+
+    const createRes = await axios.post(
+      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts`,
+      { name: nombre || phone, phone_number: `+${phone}` },
+      { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
+    );
+    return createRes.data?.id || createRes.data?.payload?.id;
+  } catch (e) {
+    console.error('Chatwoot contact error:', e.message);
+    return null;
+  }
+}
+
+async function getChatwootConversationId(contactId) {
+  try {
+    const convsRes = await axios.get(
+      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts/${contactId}/conversations`,
+      { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
+    );
+    const convs = convsRes.data?.payload || [];
+    const open = convs.find(c => c.status === 'open');
+    if (open) return open.id;
+
+    const createRes = await axios.post(
+      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations`,
+      { inbox_id: 1, contact_id: contactId },
+      { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
+    );
+    return createRes.data?.id || createRes.data?.payload?.id;
+  } catch (e) {
+    console.error('Chatwoot conversation error:', e.message);
+    return null;
+  }
+}
+
+async function enviarMensajeChatwoot(conversationId, mensaje, esBot = false) {
+  try {
+    await axios.post(
+      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations/${conversationId}/messages`,
+      { content: mensaje, message_type: esBot ? 'outgoing' : 'incoming', private: false },
+      { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
+    );
+  } catch (e) {
+    console.error('Chatwoot message error:', e.message);
+  }
+}
+
 // ─── MANYCHAT ───────────────────────────────────────────
 router.post('/manychat', async (req, res) => {
   try {
@@ -100,6 +156,18 @@ router.post('/whatsapp', async (req, res) => {
     const historial = await db.getHistorial(usuario.id);
     let respuesta = '', metadata = {};
 
+    // ── Chatwoot: crear/obtener contacto y conversación ──
+    let chatwootConvId = null;
+    if (process.env.CHATWOOT_URL && process.env.CHATWOOT_API_TOKEN) {
+      const contactId = await getChatwootContactId(from, nombre);
+      if (contactId) {
+        chatwootConvId = await getChatwootConversationId(contactId);
+        if (chatwootConvId) {
+          await enviarMensajeChatwoot(chatwootConvId, tipo === 'texto' ? mensajeTexto : '[Factura enviada 📄]', false);
+        }
+      }
+    }
+
     if (tipo === 'imagen' || tipo === 'archivo') {
       await db.guardarMensaje(usuario.id, 'user', '[Factura enviada]', { archivoUrl });
       await enviarMensajeWhatsApp(from, '⏳ Estoy analizando tu factura, dame un momento...');
@@ -144,6 +212,11 @@ router.post('/whatsapp', async (req, res) => {
 
     await db.guardarMensaje(usuario.id, 'assistant', respuesta, metadata);
     await enviarMensajeWhatsApp(from, respuesta);
+
+    // ── Chatwoot: registrar respuesta del bot ──
+    if (chatwootConvId) {
+      await enviarMensajeChatwoot(chatwootConvId, respuesta, true);
+    }
 
   } catch (error) {
     console.error('Error en webhook WhatsApp:', error);
