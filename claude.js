@@ -32,17 +32,42 @@ async function responderMensaje(historial, mensajeUsuario) {
   return response.content[0].text;
 }
 
+// FIX: Normaliza media_type y construye el content block correctamente según tipo
+function buildImageContent(base64Data, mediaType) {
+  // Normalizar image/jpg → image/jpeg
+  const normalizedType = mediaType === 'image/jpg' ? 'image/jpeg' : mediaType;
+
+  if (normalizedType === 'application/pdf') {
+    // PDFs usan type: 'document'
+    return {
+      type: 'document',
+      source: { type: 'base64', media_type: 'application/pdf', data: base64Data }
+    };
+  } else {
+    // Imágenes usan type: 'image'
+    return {
+      type: 'image',
+      source: { type: 'base64', media_type: normalizedType, data: base64Data }
+    };
+  }
+}
+
+// FIX: Limpia backticks de ```json ... ``` antes de parsear
+function parseJSONSafe(text) {
+  const clean = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+  return JSON.parse(clean);
+}
+
 async function analizarFactura(base64Data, mediaType) {
+  const imageContent = buildImageContent(base64Data, mediaType);
+
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 2048,
     messages: [{
       role: 'user',
       content: [
-        {
-          type: 'image',
-          source: { type: 'base64', media_type: mediaType, data: base64Data }
-        },
+        imageContent,
         {
           type: 'text',
           text: `Analiza esta factura española y extrae los datos en formato JSON.
@@ -86,7 +111,7 @@ IMPORTANTE:
   });
 
   try {
-    return JSON.parse(response.content[0].text);
+    return parseJSONSafe(response.content[0].text);
   } catch (e) {
     console.error('Error parseando factura:', e);
     return null;
@@ -99,7 +124,6 @@ async function generarComparativa(datosFactura, tarifas) {
   const potencia = datosFactura.potencia_kw || 4.4;
   const excedentes = datosFactura.excedentes_kwh || 0;
 
-  // Coste actual del cliente
   const costeActual = (datosFactura.precio_kwh * consumoMensual) +
                       (datosFactura.precio_potencia * potencia * diasMes);
 
@@ -107,42 +131,41 @@ async function generarComparativa(datosFactura, tarifas) {
   let mejorAhorro = 0;
 
   for (const tarifa of tarifas) {
-  let costeEnergia;
-  if (datosFactura.consumo_p1_kwh && tarifa.precio_kwh_p1) {
-    const p1 = (datosFactura.consumo_p1_kwh / (datosFactura.dias_facturacion || 30) * diasMes);
-    const p2 = (datosFactura.consumo_p2_kwh / (datosFactura.dias_facturacion || 30) * diasMes);
-    const p3 = (datosFactura.consumo_p3_kwh / (datosFactura.dias_facturacion || 30) * diasMes);
-    costeEnergia = (p1 * tarifa.precio_kwh_p1) +
-                   (p2 * (tarifa.precio_kwh_p2 || tarifa.precio_kwh_p1)) +
-                   (p3 * (tarifa.precio_kwh_p3 || tarifa.precio_kwh_p1));
-  } else {
-    costeEnergia = tarifa.precio_kwh * consumoMensual;
+    let costeEnergia;
+    if (datosFactura.consumo_p1_kwh && tarifa.precio_kwh_p1) {
+      const p1 = (datosFactura.consumo_p1_kwh / (datosFactura.dias_facturacion || 30) * diasMes);
+      const p2 = (datosFactura.consumo_p2_kwh / (datosFactura.dias_facturacion || 30) * diasMes);
+      const p3 = (datosFactura.consumo_p3_kwh / (datosFactura.dias_facturacion || 30) * diasMes);
+      costeEnergia = (p1 * tarifa.precio_kwh_p1) +
+                     (p2 * (tarifa.precio_kwh_p2 || tarifa.precio_kwh_p1)) +
+                     (p3 * (tarifa.precio_kwh_p3 || tarifa.precio_kwh_p1));
+    } else {
+      costeEnergia = tarifa.precio_kwh * consumoMensual;
+    }
+
+    const costePotencia = (tarifa.precio_kw_p1 || tarifa.precio_kw) * potencia * diasMes;
+
+    let descuentoExcedentes = 0;
+    if ((datosFactura.tiene_autoconsumo || datosFactura.tiene_bateria_virtual) && excedentes > 0) {
+      const excedentesMensuales = excedentes / (datosFactura.dias_facturacion || 30) * diasMes;
+      const precioCompensacion = tarifa.compensacion_excedentes || 0.06;
+      descuentoExcedentes = excedentesMensuales * precioCompensacion;
+    }
+
+    const costeTarifa = costeEnergia + costePotencia - descuentoExcedentes;
+    const ahorro = costeActual - costeTarifa;
+
+    if (ahorro > mejorAhorro) {
+      mejorAhorro = ahorro;
+      mejorTarifa = { ...tarifa, ahorro, costeMensual: costeTarifa };
+    }
   }
-
-  const costePotencia = (tarifa.precio_kw_p1 || tarifa.precio_kw) * potencia * diasMes;
-
-  // Compensación excedentes: si la tarifa la incluye, usamos su precio; si no, usamos 0.06 por defecto
-  let descuentoExcedentes = 0;
-  if ((datosFactura.tiene_autoconsumo || datosFactura.tiene_bateria_virtual) && excedentes > 0) {
-    const excedentesMensuales = excedentes / (datosFactura.dias_facturacion || 30) * diasMes;
-    const precioCompensacion = tarifa.compensacion_excedentes || 0.06;
-    descuentoExcedentes = excedentesMensuales * precioCompensacion;
-  }
-
-  const costeTarifa = costeEnergia + costePotencia - descuentoExcedentes;
-  const ahorro = costeActual - costeTarifa;
-
-  if (ahorro > mejorAhorro) {
-    mejorAhorro = ahorro;
-    mejorTarifa = { ...tarifa, ahorro, costeMensual: costeTarifa };
-  }
-}
 
   if (!mejorTarifa || mejorAhorro <= 0) {
-    return { 
-      mensaje: '✅ Ya tienes una tarifa muy competitiva. ¡Estás pagando un precio justo!', 
-      ahorro: 0, 
-      tarifa: null 
+    return {
+      mensaje: '✅ Ya tienes una tarifa muy competitiva. ¡Estás pagando un precio justo!',
+      ahorro: 0,
+      tarifa: null
     };
   }
 
@@ -160,17 +183,17 @@ Con ${mejorTarifa.compania} (${mejorTarifa.nombre_tarifa}) podrías ahorrar:
 
   return { mensaje, ahorro: parseFloat(ahorroAnual), tarifa: mejorTarifa };
 }
+
 async function analizarFacturaGas(base64Data, mediaType) {
+  const imageContent = buildImageContent(base64Data, mediaType);
+
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 2048,
     messages: [{
       role: 'user',
       content: [
-        {
-          type: 'image',
-          source: { type: 'base64', media_type: mediaType, data: base64Data }
-        },
+        imageContent,
         {
           type: 'text',
           text: `Analiza esta factura de GAS española y extrae los datos en formato JSON.
@@ -194,7 +217,7 @@ Si algún dato no aparece, pon null.`
   });
 
   try {
-    return JSON.parse(response.content[0].text);
+    return parseJSONSafe(response.content[0].text);
   } catch (e) {
     console.error('Error parseando factura gas:', e);
     return null;
@@ -234,9 +257,10 @@ Con Gana Energía (${tarifaCorrecta.nombre_tarifa}) podrías ahorrar:
 
   return { mensaje, ahorro: parseFloat(ahorroAnual), tarifa: tarifaCorrecta };
 }
-module.exports = { 
-  responderMensaje, 
-  analizarFactura, 
+
+module.exports = {
+  responderMensaje,
+  analizarFactura,
   generarComparativa,
   analizarFacturaGas,
   generarComparativaGas
