@@ -160,7 +160,7 @@ router.post('/chatwoot', async (req, res) => {
     if (!phone || !content) { console.log('Falta phone/content'); return; }
 
     await enviarMensajeWhatsApp(phone, content);
-    console.log('OK Agente → WhatsApp ${phone}: ${content}`);
+    console.log(`OK Agente → WhatsApp ${phone}: ${content}`);
 
   } catch (error) {
     console.error('Error en webhook Chatwoot:', error);
