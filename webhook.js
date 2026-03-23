@@ -152,11 +152,15 @@ router.post('/chatwoot', async (req, res) => {
     if (message_type !== 'outgoing') return;
     if (isPrivate) return;
 
-    const phone = conversation?.meta?.sender?.phone_number?.replace('+', '');
-    if (!phone || !content) return;
+    console.log('Chatwoot body:', JSON.stringify(req.body).slice(0, 600));
+    console.log('Meta sender:', JSON.stringify(conversation?.meta?.sender));
+    const phoneRaw = conversation?.meta?.sender?.phone_number;
+    const phone = phoneRaw?.replace(/[+\s]/g, '');
+    console.log('Phone:', phone, '| content:', content);
+    if (!phone || !content) { console.log('Falta phone/content'); return; }
 
     await enviarMensajeWhatsApp(phone, content);
-    console.log(`Agente → WhatsApp ${phone}: ${content}`);
+    console.log('OK Agente → WhatsApp ${phone}: ${content}`);
 
   } catch (error) {
     console.error('Error en webhook Chatwoot:', error);
