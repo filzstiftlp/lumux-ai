@@ -142,32 +142,63 @@ router.post('/manychat', async (req, res) => {
 });
 
 // ─── CHATWOOT → WHATSAPP ─────────────────────────────────
+// Este endpoint recibe los mensajes que el AGENTE escribe en Chatwoot
+// y los reenvía al cliente por WhatsApp.
+// Configurar en Chatwoot: Settings → Integrations → Webhooks → URL: https://tuservidor.com/webhook/chatwoot
 router.post('/chatwoot', async (req, res) => {
   try {
+    // Respondemos 200 inmediatamente para que Chatwoot no reintente
     res.status(200).send('OK');
-    const { event, message_type, content, conversation } = req.body;
-    const isPrivate = req.body.private;
 
+    const { event, message_type, content, conversation } = req.body;
+
+    // FIX: req.body.private puede venir como boolean o string "true"
+    const isPrivate = req.body.private === true || req.body.private === 'true';
+
+    console.log('[Chatwoot webhook]', { event, message_type, isPrivate, content: content?.slice(0, 80) });
+
+    // Solo procesamos mensajes nuevos, salientes, no privados y con contenido
     if (event !== 'message_created') return;
     if (message_type !== 'outgoing') return;
-    if (isPrivate) return;
+    if (isPrivate) return;  // Las notas privadas del bot se ignoran
+    if (!content || !content.trim()) return;
 
-    console.log('Chatwoot body:', JSON.stringify(req.body).slice(0, 600));
-    console.log('Meta sender:', JSON.stringify(conversation?.meta?.sender));
+    // FIX: limpiar el número correctamente (puede venir como +34612..., 34612..., etc.)
     const phoneRaw = conversation?.meta?.sender?.phone_number;
-    const phone = phoneRaw?.replace(/[+\s]/g, '');
-    console.log('Phone:', phone, '| content:', content);
-    if (!phone || !content) { console.log('Falta phone/content'); return; }
+    if (!phoneRaw) {
+      console.log('[Chatwoot webhook] No se encontró phone_number en conversation.meta.sender');
+      return;
+    }
+
+    // Eliminar +, espacios, guiones — dejamos solo dígitos
+    const phone = phoneRaw.replace(/[\s+\-()]/g, '');
+    console.log(`[Chatwoot webhook] Reenviando a WhatsApp ${phone}: ${content.slice(0, 80)}`);
 
     await enviarMensajeWhatsApp(phone, content);
-    console.log(`OK Agente → WhatsApp ${phone}: ${content}`);
+    console.log(`[Chatwoot webhook] ✅ Mensaje enviado a ${phone}`);
+
+    // Guardar en la DB: buscar el usuario por teléfono y guardar el mensaje del agente
+    try {
+      const { data: usuarios } = await db.supabase
+        .from('usuarios')
+        .select('id')
+        .eq('telefono', phone)
+        .limit(1);
+
+      if (usuarios && usuarios.length > 0) {
+        await db.guardarMensaje(usuarios[0].id, 'assistant', content, { fuente: 'agente_chatwoot' });
+      }
+    } catch (dbErr) {
+      // No bloqueamos el flujo si falla el log en DB
+      console.error('[Chatwoot webhook] Error guardando en DB:', dbErr.message);
+    }
 
   } catch (error) {
     console.error('Error en webhook Chatwoot:', error);
   }
 });
 
-// ─── WHATSAPP DIRECTO ────────────────────────────────────
+// ─── WHATSAPP VERIFICACIÓN ───────────────────────────────
 router.get('/whatsapp', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -179,20 +210,29 @@ router.get('/whatsapp', (req, res) => {
   }
 });
 
+// ─── WHATSAPP → BOT ─────────────────────────────────────
 router.post('/whatsapp', async (req, res) => {
   try {
     res.status(200).send('OK');
+
     const entry = req.body.entry?.[0];
     const value = entry?.changes?.[0]?.value;
     const messages = value?.messages;
     if (!messages || messages.length === 0) return;
 
     const msg = messages[0];
-    const from = msg.from;
+    const from = msg.from; // Número del cliente, ej: "34612345678"
+
+    // FIX: WHATSAPP_PHONE_ID es el ID numérico del número de negocio (ej: "123456789012345"),
+    // NO es el número de teléfono. Para filtrar mensajes enviados por nosotros mismos
+    // usamos el campo "display_phone_number" del metadata, que sí es el número real.
+    const ourPhoneNumber = value?.metadata?.display_phone_number?.replace(/[\s+\-()]/g, '');
+    if (ourPhoneNumber && from === ourPhoneNumber) {
+      console.log('[WhatsApp] Mensaje propio ignorado');
+      return;
+    }
+
     const nombre = value?.contacts?.[0]?.profile?.name || '';
-
-    if (from === process.env.WHATSAPP_PHONE_ID) return;
-
     let tipo = 'texto', mensajeTexto = '', archivoUrl = null, mediaType = null, fileName = null;
 
     if (msg.type === 'text') {
@@ -207,7 +247,10 @@ router.post('/whatsapp', async (req, res) => {
       archivoUrl = await getMediaUrl(msg.document.id);
       mediaType = msg.document.mime_type || 'application/pdf';
       fileName = msg.document.filename || `factura_${Date.now()}.pdf`;
-    } else return;
+    } else {
+      console.log(`[WhatsApp] Tipo de mensaje no soportado: ${msg.type}`);
+      return;
+    }
 
     const usuario = await db.getOrCreateUsuario(from, { nombre, telefono: from, canal: 'whatsapp' });
     const historial = await db.getHistorial(usuario.id);
@@ -226,7 +269,6 @@ router.post('/whatsapp', async (req, res) => {
       await db.guardarMensaje(usuario.id, 'user', '[Factura enviada]', { archivoUrl });
       await enviarMensajeWhatsApp(from, '⏳ Estoy analizando tu factura, dame un momento...');
 
-      // Descargar el archivo
       const imageResponse = await axios.get(archivoUrl, {
         responseType: 'arraybuffer',
         headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` }
@@ -234,7 +276,6 @@ router.post('/whatsapp', async (req, res) => {
       const fileBuffer = Buffer.from(imageResponse.data);
       const base64 = fileBuffer.toString('base64');
 
-      // Enviar el archivo real a Chatwoot
       if (chatwootConvId) {
         await enviarArchivoChatwoot(chatwootConvId, fileBuffer, fileName, mediaType);
       }
@@ -269,18 +310,19 @@ router.post('/whatsapp', async (req, res) => {
       }
     } else {
       await db.guardarMensaje(usuario.id, 'user', mensajeTexto);
-      respuesta = await responderMensaje(historial, mensajeTexto);
 
-      // Enviar texto del cliente a Chatwoot
+      // Mostrar mensaje del cliente en Chatwoot
       if (chatwootConvId) {
         await enviarMensajeChatwoot(chatwootConvId, mensajeTexto, false);
       }
+
+      respuesta = await responderMensaje(historial, mensajeTexto);
     }
 
     await db.guardarMensaje(usuario.id, 'assistant', respuesta, metadata);
     await enviarMensajeWhatsApp(from, respuesta);
 
-    // Registrar respuesta del bot como nota privada en Chatwoot
+    // Registrar respuesta del bot como nota privada en Chatwoot (para visibilidad interna)
     if (chatwootConvId) {
       await enviarMensajeChatwoot(chatwootConvId, respuesta, true);
     }
@@ -290,6 +332,7 @@ router.post('/whatsapp', async (req, res) => {
   }
 });
 
+// ─── HELPERS ─────────────────────────────────────────────
 async function getMediaUrl(mediaId) {
   const r = await axios.get(`https://graph.facebook.com/v22.0/${mediaId}`,
     { headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } });
@@ -297,9 +340,11 @@ async function getMediaUrl(mediaId) {
 }
 
 async function enviarMensajeWhatsApp(to, mensaje) {
-  await axios.post(`https://graph.facebook.com/v22.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
+  await axios.post(
+    `https://graph.facebook.com/v22.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
     { messaging_product: 'whatsapp', to, type: 'text', text: { body: mensaje } },
-    { headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' } });
+    { headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' } }
+  );
 }
 
 module.exports = router;
