@@ -52,7 +52,12 @@ async function enviarMensajeChatwoot(conversationId, mensaje, esBot = false) {
   try {
     await axios.post(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations/${conversationId}/messages`,
-      { content: mensaje, message_type: esBot ? 'outgoing' : 'incoming', private: false },
+      {
+        content: esBot ? `🤖 ${mensaje}` : mensaje,
+        message_type: esBot ? 'outgoing' : 'incoming',
+        // Bot messages are private notes so Chatwoot doesn't re-send via WhatsApp
+        private: esBot ? true : false
+      },
       { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
     );
   } catch (e) {
@@ -142,6 +147,9 @@ router.post('/whatsapp', async (req, res) => {
     const from = msg.from;
     const nombre = value?.contacts?.[0]?.profile?.name || '';
 
+    // Ignorar mensajes enviados por el propio bot (evita bucles)
+    if (from === process.env.WHATSAPP_PHONE_ID) return;
+
     let tipo = 'texto', mensajeTexto = '', archivoUrl = null, mediaType = null;
 
     if (msg.type === 'text') {
@@ -213,7 +221,7 @@ router.post('/whatsapp', async (req, res) => {
     await db.guardarMensaje(usuario.id, 'assistant', respuesta, metadata);
     await enviarMensajeWhatsApp(from, respuesta);
 
-    // ── Chatwoot: registrar respuesta del bot ──
+    // ── Chatwoot: registrar respuesta del bot como nota privada ──
     if (chatwootConvId) {
       await enviarMensajeChatwoot(chatwootConvId, respuesta, true);
     }
