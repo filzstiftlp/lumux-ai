@@ -1,40 +1,59 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const SYSTEM_PROMPT = `Eres Lumux AI, el asistente inteligente de Lumux, especializado en optimización de tarifas de luz y gas en España.
+const SYSTEM_PROMPT_BASE = `Eres Lumux AI, el agente comercial inteligente de Lumux, especializado en optimización de tarifas de luz y gas en España.
 
-Tu objetivo es ayudar a los clientes a ahorrar en su factura de la luz.
-Siempre respondes en español, de forma amigable y profesional.
-Sé conciso en WhatsApp (máximo 3-4 líneas por mensaje).
-Nunca inventes datos. Si no sabes algo, dilo con honestidad.
+Tu misión es ayudar a los clientes a ahorrar en su factura y guiarles hacia la contratación de la mejor tarifa. Eres un agente comercial experto: seguro, amigable y orientado a cerrar. Respondes siempre en español, de forma concisa (máximo 3-4 líneas en WhatsApp). Nunca inventas datos.
 
 IDENTIDAD:
-- Eres Lumux AI y representas a Lumux. Ese es tu nombre comercial siempre.
-- Solo si el cliente pregunta expresamente por la razón social o empresa detrás, puedes mencionar que es Fersan Energy SL.
-- Solo si el cliente pregunta quién te creó o desarrolló, puedes decir que fuiste creado por Alberto Fdez, fundador de Lumux.
-- Nunca ofrezcas esta información por iniciativa propia.
+- Eres Lumux AI, marca comercial de Lumux. Siempre.
+- Solo si preguntan por la razón social: Fersan Energy SL.
+- Solo si preguntan quién te creó: Alberto Fdez, fundador de Lumux.
+- Nunca lo ofrezcas por iniciativa propia.
+
+ROL DE AGENTE COMERCIAL:
+- Cuando ya tienes el análisis de la factura, eres un comercial seguro que conoce los datos exactos del cliente.
+- Si el cliente pregunta "¿tanto ahorro?", "¿es real?", "¿cómo lo calculas?" responde con SEGURIDAD y los datos reales del análisis. Nunca digas que los datos eran un ejemplo o que cometiste un error. Los datos son reales y provienen del análisis de su factura.
+- Aprovecha cada pregunta del cliente para avanzar hacia la contratación. Si pregunta por el ahorro, confirma y pregunta si quiere contratar.
+- Ejemplos de cierre: "¿Quieres que te preparemos el cambio? Es sin permanencia y en menos de 24h." / "¿Te llamamos para gestionarlo sin compromiso?"
 
 CUANDO EL CLIENTE ENVÍE UNA FACTURA:
-1. Confirma que la has recibido y que vas a analizarla.
-2. Extrae todos los datos relevantes.
-3. Detecta si tiene batería virtual o compensación de excedentes.
+- Confirma brevemente que la recibes. Sin pedir confirmaciones innecesarias ni preguntar si la imagen se ve bien.
+- No preguntes sobre autoconsumo ni placas solares a menos que la factura lo indique.
 
 ATENCIÓN TELEFÓNICA:
-- Si el cliente quiere hablar con una persona, dile que puede llamar al mismo número de WhatsApp con el que está hablando ahora mismo.
-- Ejemplo: "Puedes llamarnos directamente a este mismo número de WhatsApp y te atenderemos encantados 😊"
+- Si el cliente quiere hablar con alguien, dile que puede llamar a este mismo número de WhatsApp.
 
-Si el cliente hace preguntas sobre luz, tarifas o facturas, responde con conocimiento experto sobre el mercado eléctrico español.`;
+TEMAS AJENOS:
+- Si preguntan sobre política, opiniones polémicas u otros temas, declina amablemente y redirige a las facturas.`;
 
+// ─── RESPONDER MENSAJE ────────────────────────────────────────────────────────
+// Inyecta el análisis de factura en el system prompt (no en el historial)
+// para que Claude lo trate como verdad absoluta y no lo cuestione
 async function responderMensaje(historial, mensajeUsuario) {
+  let systemPrompt = SYSTEM_PROMPT_BASE;
+
+  // Buscar el [ANÁLISIS FACTURA] más reciente e inyectarlo en el system
+  const resumenAnalisis = [...historial]
+    .reverse()
+    .find(m => m.mensaje && m.mensaje.startsWith('[ANÁLISIS FACTURA]'));
+
+  if (resumenAnalisis) {
+    systemPrompt += `\n\nCONTEXTO REAL DE ESTA CONVERSACIÓN (datos ya calculados de la factura real del cliente, úsalos con total seguridad):\n${resumenAnalisis.mensaje}`;
+  }
+
+  // Filtrar los mensajes de resumen del historial para no duplicar ni confundir
   const messages = [
-    ...historial.map(m => ({ role: m.rol, content: m.mensaje })),
+    ...historial
+      .filter(m => !m.mensaje.startsWith('[ANÁLISIS FACTURA]'))
+      .map(m => ({ role: m.rol, content: m.mensaje })),
     { role: 'user', content: mensajeUsuario }
   ];
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 1024,
-    system: SYSTEM_PROMPT,
+    system: systemPrompt,
     messages
   });
 
@@ -118,10 +137,10 @@ REGLAS IMPORTANTES:
   }
 }
 
-// ─── COMPARATIVA DE LUZ (con datos reales + orden por comisión) ───────────────
+// ─── COMPARATIVA DE LUZ ───────────────────────────────────────────────────────
 async function generarComparativa(datosFactura, tarifas) {
   const diasFactura = datosFactura.dias_facturacion || 30;
-  const factor = 30 / diasFactura; // Normalizar a 30 días
+  const factor = 30 / diasFactura;
 
   const consumoTotal = datosFactura.consumo_kwh || 0;
   const consumoP1    = datosFactura.consumo_p1_kwh || 0;
@@ -130,17 +149,13 @@ async function generarComparativa(datosFactura, tarifas) {
   const potencia     = datosFactura.potencia_kw || 4.4;
   const tieneTriperiodo = consumoP1 > 0 || consumoP2 > 0 || consumoP3 > 0;
 
-  // Coste actual real normalizado a 30 días (sin impuestos: IVA 21% + IE 5.11% ≈ x1.2611)
   const precioTotalSinImpuestos = datosFactura.precio_total / 1.2611;
   const costeActualMes = precioTotalSinImpuestos * factor;
 
-  // Las tarifas ya vienen ordenadas por orden_comision ASC desde la query
-  // Buscamos la primera (mayor comisión) que produzca ahorro real para el cliente
   let mejorTarifa = null;
   let mejorAhorro = 0;
   let mejorCoste = 0;
 
-  // Filtrar tarifas por potencia del cliente
   const tarifasFiltradas = tarifas.filter(t => {
     const minKw = t.potencia_min_kw || 0;
     const maxKw = t.potencia_max_kw || 15;
@@ -148,11 +163,9 @@ async function generarComparativa(datosFactura, tarifas) {
   });
 
   for (const tarifa of tarifasFiltradas) {
-    // ── Calcular coste energía con precios REALES de la tarifa ──
     let costeEnergia = 0;
 
     if (tieneTriperiodo && tarifa.precio_kwh_p1) {
-      // Usar consumos reales por periodo
       const p1Mes = consumoP1 * factor;
       const p2Mes = consumoP2 * factor;
       const p3Mes = consumoP3 * factor;
@@ -161,19 +174,13 @@ async function generarComparativa(datosFactura, tarifas) {
         (p2Mes * (tarifa.precio_kwh_p2 || tarifa.precio_kwh_p1)) +
         (p3Mes * (tarifa.precio_kwh_p3 || tarifa.precio_kwh_p1));
     } else {
-      // Tarifa plana o no tenemos desglose por periodos
       const consumoMes = consumoTotal * factor;
       costeEnergia = consumoMes * (tarifa.precio_kwh_p1 || tarifa.precio_kwh || 0);
     }
 
-    // ── Calcular coste potencia con precios REALES ──
-    const costePotencia =
-      (tarifa.precio_kw_p1 || tarifa.precio_kw || 0) * potencia * 30;
-
-    // ── Coste fijo mensual (mantenimiento, etc.) ──
+    const costePotencia = (tarifa.precio_kw_p1 || tarifa.precio_kw || 0) * potencia * 30;
     const costeFijo = tarifa.precio_fijo_mes || 0;
 
-    // ── Descuento batería virtual si aplica ──
     let descuentoBV = 0;
     if ((datosFactura.tiene_autoconsumo || datosFactura.tiene_bateria_virtual) &&
         datosFactura.excedentes_kwh > 0 && tarifa.bateria_virtual) {
@@ -184,14 +191,12 @@ async function generarComparativa(datosFactura, tarifas) {
     const costeTarifa = costeEnergia + costePotencia + costeFijo - descuentoBV;
     const ahorro = costeActualMes - costeTarifa;
 
-    // Tomamos la primera tarifa (mayor comisión) que genere ahorro > 3€/mes
     if (ahorro > 3 && mejorTarifa === null) {
       mejorTarifa = tarifa;
       mejorAhorro = ahorro;
       mejorCoste = costeTarifa;
     }
 
-    // Si ninguna con comisión alta ahorra, guardamos la que más ahorra
     if (ahorro > mejorAhorro && mejorTarifa === null) {
       mejorAhorro = ahorro;
       mejorCoste = costeTarifa;
@@ -252,26 +257,26 @@ function generarUrlInforme(nombre, telefono, datosFactura, comparativa) {
   const d = comparativa.datosComparativa;
 
   const params = new URLSearchParams({
-    nombre:            nombre || '',
-    compania:          datosFactura.compania || '',
-    nueva_compania:    t.compania,
-    nueva_tarifa:      t.nombre_tarifa,
-    precio_actual:     d.precio_actual_mes,
-    precio_nuevo_mes:  d.precio_nuevo_mes,
-    ahorro_anual:      d.ahorro_anual,
-    consumo:           d.consumo_total,
-    consumo_p1:        d.consumo_p1,
-    consumo_p2:        d.consumo_p2,
-    consumo_p3:        d.consumo_p3,
-    potencia:          d.potencia,
-    dias:              d.dias,
-    precio_kwh_p1:     t.precio_kwh_p1 || '',
-    precio_kwh_p2:     t.precio_kwh_p2 || '',
-    precio_kwh_p3:     t.precio_kwh_p3 || '',
-    pot_p1:            t.precio_kw_p1 || '',
-    pot_p2:            t.precio_kw_p2 || '',
-    wa:                telefono || process.env.WHATSAPP_PHONE_NUMBER || '955209158',
-    url_contrato:      `${base}/contrato.html`,
+    nombre:           nombre || '',
+    compania:         datosFactura.compania || '',
+    nueva_compania:   t.compania,
+    nueva_tarifa:     t.nombre_tarifa,
+    precio_actual:    d.precio_actual_mes,
+    precio_nuevo_mes: d.precio_nuevo_mes,
+    ahorro_anual:     d.ahorro_anual,
+    consumo:          d.consumo_total,
+    consumo_p1:       d.consumo_p1,
+    consumo_p2:       d.consumo_p2,
+    consumo_p3:       d.consumo_p3,
+    potencia:         d.potencia,
+    dias:             d.dias,
+    precio_kwh_p1:    t.precio_kwh_p1 || '',
+    precio_kwh_p2:    t.precio_kwh_p2 || '',
+    precio_kwh_p3:    t.precio_kwh_p3 || '',
+    pot_p1:           t.precio_kw_p1 || '',
+    pot_p2:           t.precio_kw_p2 || '',
+    wa:               telefono || process.env.WHATSAPP_PHONE_NUMBER || '955209158',
+    url_contrato:     `${base}/contrato.html`,
   });
 
   return `${base}/informe.html?${params.toString()}`;
@@ -356,13 +361,13 @@ Con Gana Energía (${tarifaCorrecta.nombre_tarifa}) podrías ahorrar:
   return { mensaje, ahorro: ahorroAnual, tarifa: tarifaCorrecta };
 }
 
-// ─── RESUMEN PARA HISTORIAL ──────────────────────────────────────────────────
+// ─── RESUMEN PARA HISTORIAL ───────────────────────────────────────────────────
 function generarResumenHistorial(datosFactura, comparativa) {
   if (!comparativa || !comparativa.tarifa) {
     return `[ANÁLISIS FACTURA] Compañía: ${datosFactura.compania || 'desconocida'}. Consumo: ${datosFactura.consumo_kwh || 0} kWh. Precio total factura: ${datosFactura.precio_total || 0}€. Resultado: tarifa ya competitiva, no se encontró ahorro significativo.`;
   }
   const d = comparativa.datosComparativa;
-  return `[ANÁLISIS FACTURA] Compañía actual: ${datosFactura.compania || 'desconocida'}. Consumo: ${datosFactura.consumo_kwh || 0} kWh (${d.dias} días). Potencia: ${d.potencia} kW. Precio actual: ${d.precio_actual_mes}€/mes (${d.precio_actual_anual}€/año). Tarifa recomendada: ${comparativa.tarifa.compania} - ${comparativa.tarifa.nombre_tarifa}. Precio nuevo: ${d.precio_nuevo_mes}€/mes. Ahorro estimado: ${d.ahorro_anual}€/año (${d.pct_ahorro}%). Cálculo basado en datos reales de la factura.`;
+  return `[ANÁLISIS FACTURA] Compañía actual: ${datosFactura.compania || 'desconocida'}. Consumo: ${datosFactura.consumo_kwh || 0} kWh (${d.dias} días). Potencia: ${d.potencia} kW. Precio actual: ${d.precio_actual_mes}€/mes (${d.precio_actual_anual}€/año). Tarifa recomendada: ${comparativa.tarifa.compania} - ${comparativa.tarifa.nombre_tarifa}. Precio nuevo: ${d.precio_nuevo_mes}€/mes. Ahorro estimado: ${d.ahorro_anual}€/año (${d.pct_ahorro}%). Cálculo basado en los datos reales de la factura del cliente.`;
 }
 
 module.exports = {
