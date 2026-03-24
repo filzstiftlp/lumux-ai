@@ -362,12 +362,57 @@ Con Gana Energía (${tarifaCorrecta.nombre_tarifa}) podrías ahorrar:
 }
 
 // ─── RESUMEN PARA HISTORIAL ───────────────────────────────────────────────────
+// Incluye TODOS los datos de la factura para que el bot pueda responder
+// cualquier pregunta del cliente sobre su consumo, precios, potencia, etc.
 function generarResumenHistorial(datosFactura, comparativa) {
+  const f = datosFactura;
+
+  // Datos completos de la factura actual
+  const datosFacturaStr = [
+    `Compañía: ${f.compania || 'desconocida'}`,
+    `Fecha factura: ${f.fecha_factura || 'desconocida'}`,
+    `Periodo facturado: ${f.dias_facturacion || 30} días`,
+    `Tipo tarifa: ${f.tipo_tarifa || '2.0TD'}`,
+    `CUPS: ${f.cups || 'no disponible'}`,
+    `Potencia contratada: ${f.potencia_kw || 0} kW`,
+    `Consumo total: ${f.consumo_kwh || 0} kWh`,
+    f.consumo_p1_kwh ? `Consumo P1 (Punta): ${f.consumo_p1_kwh} kWh` : null,
+    f.consumo_p2_kwh ? `Consumo P2 (Llano): ${f.consumo_p2_kwh} kWh` : null,
+    f.consumo_p3_kwh ? `Consumo P3 (Valle): ${f.consumo_p3_kwh} kWh` : null,
+    `Precio medio energía: ${f.precio_kwh || 0} €/kWh`,
+    f.precio_kwh_p1 ? `Precio P1: ${f.precio_kwh_p1} €/kWh` : null,
+    f.precio_kwh_p2 ? `Precio P2: ${f.precio_kwh_p2} €/kWh` : null,
+    f.precio_kwh_p3 ? `Precio P3: ${f.precio_kwh_p3} €/kWh` : null,
+    `Precio potencia: ${f.precio_potencia_dia || 0} €/kW/día`,
+    `Importe energía: ${f.importe_energia || 0}€`,
+    `Importe potencia: ${f.importe_potencia || 0}€`,
+    `Total factura (con IVA): ${f.precio_total || 0}€`,
+    f.tiene_autoconsumo ? `Autoconsumo: SÍ` : null,
+    f.tiene_bateria_virtual ? `Batería virtual: SÍ` : null,
+    f.excedentes_kwh ? `Excedentes: ${f.excedentes_kwh} kWh` : null,
+    f.consumo_anual_estimado ? `Consumo anual estimado: ${f.consumo_anual_estimado} kWh` : null,
+  ].filter(Boolean).join('. ');
+
   if (!comparativa || !comparativa.tarifa) {
-    return `[ANÁLISIS FACTURA] Compañía: ${datosFactura.compania || 'desconocida'}. Consumo: ${datosFactura.consumo_kwh || 0} kWh. Precio total factura: ${datosFactura.precio_total || 0}€. Resultado: tarifa ya competitiva, no se encontró ahorro significativo.`;
+    return `[ANÁLISIS FACTURA] ${datosFacturaStr}. RESULTADO: tarifa ya competitiva, no se encontró ahorro significativo.`;
   }
+
   const d = comparativa.datosComparativa;
-  return `[ANÁLISIS FACTURA] Compañía actual: ${datosFactura.compania || 'desconocida'}. Consumo: ${datosFactura.consumo_kwh || 0} kWh (${d.dias} días). Potencia: ${d.potencia} kW. Precio actual: ${d.precio_actual_mes}€/mes (${d.precio_actual_anual}€/año). Tarifa recomendada: ${comparativa.tarifa.compania} - ${comparativa.tarifa.nombre_tarifa}. Precio nuevo: ${d.precio_nuevo_mes}€/mes. Ahorro estimado: ${d.ahorro_anual}€/año (${d.pct_ahorro}%). Cálculo basado en los datos reales de la factura del cliente.`;
+  const t = comparativa.tarifa;
+
+  const datosComparativaStr = [
+    `Precio actual normalizado: ${d.precio_actual_mes}€/mes (${d.precio_actual_anual}€/año)`,
+    `Tarifa recomendada: ${t.compania} - ${t.nombre_tarifa}`,
+    `Precio nuevo: ${d.precio_nuevo_mes}€/mes (${d.precio_nuevo_anual}€/año)`,
+    `Ahorro estimado: ${d.ahorro_anual}€/año (${d.pct_ahorro}% menos)`,
+    t.precio_kwh_p1 ? `Nuevo precio P1: ${t.precio_kwh_p1} €/kWh` : null,
+    t.precio_kwh_p2 ? `Nuevo precio P2: ${t.precio_kwh_p2} €/kWh` : null,
+    t.precio_kwh_p3 ? `Nuevo precio P3: ${t.precio_kwh_p3} €/kWh` : null,
+    t.precio_kw_p1 ? `Nueva potencia P1: ${t.precio_kw_p1} €/kW/día` : null,
+    t.precio_fijo_mes ? `Cuota fija nueva tarifa: ${t.precio_fijo_mes}€/mes` : null,
+  ].filter(Boolean).join('. ');
+
+  return `[ANÁLISIS FACTURA] DATOS DE LA FACTURA ACTUAL: ${datosFacturaStr}. COMPARATIVA Y AHORRO: ${datosComparativaStr}. Cálculo basado en datos reales de la factura del cliente.`;
 }
 
 module.exports = {
