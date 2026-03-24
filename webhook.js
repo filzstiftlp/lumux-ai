@@ -25,16 +25,51 @@ async function getChatwootContactId(phone, nombre) {
   } catch (e) { console.error('Chatwoot contact error:', e.message); return null; }
 }
 
+// Cache del inbox ID para no consultarlo en cada mensaje
+let _chatwootInboxId = null;
+
+async function getWhatsAppInboxId() {
+  if (_chatwootInboxId) return _chatwootInboxId;
+  // Si está en variable de entorno, usar esa directamente
+  if (process.env.CHATWOOT_INBOX_ID) {
+    _chatwootInboxId = process.env.CHATWOOT_INBOX_ID;
+    return _chatwootInboxId;
+  }
+  // Auto-detectar: buscar el inbox de tipo whatsapp o api
+  try {
+    const res = await axios.get(
+      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/inboxes`,
+      { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
+    );
+    const inboxes = res.data?.payload || [];
+    console.log('[Chatwoot] Inboxes disponibles:', inboxes.map(i => `${i.id}:${i.channel_type}:${i.name}`));
+    // Buscar primero whatsapp, luego api, luego el primero que haya
+    const wa = inboxes.find(i => i.channel_type === 'Channel::Whatsapp' || i.name?.toLowerCase().includes('whatsapp'));
+    const api = inboxes.find(i => i.channel_type === 'Channel::Api');
+    const inbox = wa || api || inboxes[0];
+    if (inbox) {
+      _chatwootInboxId = String(inbox.id);
+      console.log(`[Chatwoot] Inbox detectado: ${_chatwootInboxId} (${inbox.name})`);
+      return _chatwootInboxId;
+    }
+  } catch (e) {
+    console.error('[Chatwoot] Error detectando inbox:', e.message);
+  }
+  return '1'; // último fallback
+}
+
 async function getChatwootConversationId(contactId) {
   try {
-    const inboxId = process.env.CHATWOOT_INBOX_ID || '2';
+    const inboxId = await getWhatsAppInboxId();
     const convsRes = await axios.get(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts/${contactId}/conversations`,
       { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
     );
     const convs = convsRes.data?.payload || [];
+    // Buscar conversación abierta en el inbox correcto
     const open = convs.find(c => c.status === 'open' && String(c.inbox_id) === String(inboxId));
     if (open) return open.id;
+    // Si no hay abierta, crear nueva
     const createRes = await axios.post(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations`,
       { inbox_id: parseInt(inboxId), contact_id: contactId },
