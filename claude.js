@@ -356,11 +356,21 @@ Con Gana Energía (${tarifaCorrecta.nombre_tarifa}) podrías ahorrar:
   return { mensaje, ahorro: ahorroAnual, tarifa: tarifaCorrecta };
 }
 
+// ─── RESUMEN PARA HISTORIAL ──────────────────────────────────────────────────
+function generarResumenHistorial(datosFactura, comparativa) {
+  if (!comparativa || !comparativa.tarifa) {
+    return `[ANÁLISIS FACTURA] Compañía: ${datosFactura.compania || 'desconocida'}. Consumo: ${datosFactura.consumo_kwh || 0} kWh. Precio total factura: ${datosFactura.precio_total || 0}€. Resultado: tarifa ya competitiva, no se encontró ahorro significativo.`;
+  }
+  const d = comparativa.datosComparativa;
+  return `[ANÁLISIS FACTURA] Compañía actual: ${datosFactura.compania || 'desconocida'}. Consumo: ${datosFactura.consumo_kwh || 0} kWh (${d.dias} días). Potencia: ${d.potencia} kW. Precio actual: ${d.precio_actual_mes}€/mes (${d.precio_actual_anual}€/año). Tarifa recomendada: ${comparativa.tarifa.compania} - ${comparativa.tarifa.nombre_tarifa}. Precio nuevo: ${d.precio_nuevo_mes}€/mes. Ahorro estimado: ${d.ahorro_anual}€/año (${d.pct_ahorro}%). Cálculo basado en datos reales de la factura.`;
+}
+
 module.exports = {
   responderMensaje,
   analizarFactura,
   generarComparativa,
   generarUrlInforme,
+  generarResumenHistorial,
   analizarFacturaGas,
   generarComparativaGas
 };

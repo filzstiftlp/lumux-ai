@@ -5,7 +5,7 @@ const FormData = require('form-data');
 const db = require('./db');
 const {
   responderMensaje, analizarFactura, generarComparativa, generarUrlInforme,
-  analizarFacturaGas, generarComparativaGas
+  generarResumenHistorial, analizarFacturaGas, generarComparativaGas
 } = require('./claude');
 
 async function getChatwootContactId(phone, nombre) {
@@ -189,6 +189,12 @@ async function procesarFactura(base64, mediaType, usuario, telefono) {
   const comparativa = esGas
     ? await generarComparativaGas(datosFactura, tarifas)
     : await generarComparativa(datosFactura, tarifas);
+
+  // Guardar siempre el resumen en historial (con o sin ahorro)
+  if (!esGas) {
+    const resumen = generarResumenHistorial(datosFactura, comparativa);
+    await db.guardarMensaje(usuario.id, 'assistant', resumen, { tipo: 'resumen_analisis', factura_id: factura.id });
+  }
 
   let respuesta = comparativa.mensaje;
   let metadata = {};
