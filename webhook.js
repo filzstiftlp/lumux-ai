@@ -83,22 +83,61 @@ async function enviarMensajeWhatsApp(to, mensaje) {
   );
 }
 
+// ─── PLANTILLA CON BOTÓN ──────────────────────────────────────────────────────
+async function enviarPlantillaInforme(telefono, nombre, companiaActual, nuevaCompania, ahorro, pctAhorro, shortId) {
+  await axios.post(
+    `https://graph.facebook.com/v22.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
+    {
+      messaging_product: 'whatsapp',
+      to: telefono,
+      type: 'template',
+      template: {
+        name: 'informe_ahorro_lumux',
+        language: { code: 'es' },
+        components: [
+          {
+            type: 'body',
+            parameters: [
+              { type: 'text', text: nombre || 'cliente' },
+              { type: 'text', text: companiaActual || 'tu compañía' },
+              { type: 'text', text: nuevaCompania },
+              { type: 'text', text: String(Math.round(ahorro)) },
+              { type: 'text', text: String(pctAhorro) },
+            ]
+          },
+          {
+            type: 'button',
+            sub_type: 'url',
+            index: '0',
+            parameters: [{ type: 'text', text: shortId }]
+          }
+        ]
+      }
+    },
+    { headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' } }
+  );
+  console.log(`[WA Template] Enviado a ${telefono} shortId=${shortId}`);
+}
+
+// ─── PROCESAR FACTURA ─────────────────────────────────────────────────────────
 async function procesarFactura(base64, mediaType, usuario, telefono) {
   const datosFactura = await analizarFactura(base64, mediaType);
-  if (!datosFactura) return { respuesta: '❌ No he podido leer la factura. ¿Puedes enviarla más clara o en PDF?', metadata: {} };
+  if (!datosFactura) {
+    return { respuesta: '❌ No he podido leer la factura. ¿Puedes enviarla más clara o en PDF?', metadata: {} };
+  }
 
   const esGas = datosFactura.tipo_suministro === 'gas';
 
   const factura = await db.guardarFactura(usuario.id, {
-    compania: datosFactura.compania,
-    consumo_kwh: datosFactura.consumo_kwh,
-    potencia_kw: datosFactura.potencia_kw || null,
-    precio_kwh: datosFactura.precio_kwh,
-    precio_potencia: datosFactura.precio_potencia_dia || null,
-    precio_total: datosFactura.precio_total,
+    compania:         datosFactura.compania,
+    consumo_kwh:      datosFactura.consumo_kwh,
+    potencia_kw:      datosFactura.potencia_kw || null,
+    precio_kwh:       datosFactura.precio_kwh,
+    precio_potencia:  datosFactura.precio_potencia_dia || null,
+    precio_total:     datosFactura.precio_total,
     dias_facturacion: datosFactura.dias_facturacion,
-    fecha_factura: datosFactura.fecha_factura,
-    raw_texto_ocr: JSON.stringify(datosFactura)
+    fecha_factura:    datosFactura.fecha_factura,
+    raw_texto_ocr:    JSON.stringify(datosFactura)
   });
 
   const { data: tarifas } = await db.supabase
@@ -120,17 +159,68 @@ async function procesarFactura(base64, mediaType, usuario, telefono) {
   let metadata = {};
 
   if (comparativa.ahorro > 0 && comparativa.tarifa) {
-    const urlInforme = generarUrlInforme(usuario.nombre, telefono, datosFactura, comparativa);
-    const oferta = await db.crearOferta(usuario.id, factura.id, comparativa.tarifa.id, comparativa.ahorro, urlInforme);
+    const d = comparativa.datosComparativa;
+
+    // 1. Guardar informe con short_id
+    const informeGuardado = await db.guardarInforme({
+      usuario_id:        usuario.id,
+      factura_id:        factura.id,
+      nombre:            usuario.nombre,
+      telefono:          telefono,
+      compania_actual:   datosFactura.compania,
+      consumo_kwh:       datosFactura.consumo_kwh,
+      consumo_p1_kwh:    datosFactura.consumo_p1_kwh,
+      consumo_p2_kwh:    datosFactura.consumo_p2_kwh,
+      consumo_p3_kwh:    datosFactura.consumo_p3_kwh,
+      potencia_kw:       datosFactura.potencia_kw,
+      precio_actual_mes: d.precio_actual_mes,
+      dias_facturacion:  datosFactura.dias_facturacion,
+      nueva_compania:    comparativa.tarifa.compania,
+      nueva_tarifa:      comparativa.tarifa.nombre_tarifa,
+      precio_nuevo_mes:  d.precio_nuevo_mes,
+      ahorro_anual:      comparativa.ahorro,
+      pct_ahorro:        d.pct_ahorro,
+      precio_kwh_p1:     comparativa.tarifa.precio_kwh_p1,
+      precio_kwh_p2:     comparativa.tarifa.precio_kwh_p2,
+      precio_kwh_p3:     comparativa.tarifa.precio_kwh_p3,
+      precio_pot_p1:     comparativa.tarifa.precio_kw_p1,
+      precio_pot_p2:     comparativa.tarifa.precio_kw_p2,
+      precio_fijo_mes:   comparativa.tarifa.precio_fijo_mes,
+    });
+
+    // 2. URL corta
+    const urlCorta = `${process.env.WEB_URL || 'https://lumux.es'}/informe.html?id=${informeGuardado.short_id}`;
+
+    // 3. Crear oferta
+    const oferta = await db.crearOferta(usuario.id, factura.id, comparativa.tarifa.id, comparativa.ahorro, urlCorta);
+    await db.supabase.from('informes').update({ oferta_id: oferta.id }).eq('id', informeGuardado.id);
     await db.programarRemarketing(usuario.id, oferta.id, 3, 'seguimiento_oferta');
-    respuesta += `\n${urlInforme}`;
-    metadata = { factura_id: factura.id, oferta_id: oferta.id, url_informe: urlInforme };
+
+    // 4. Enviar plantilla con botón
+    try {
+      await enviarPlantillaInforme(
+        telefono,
+        usuario.nombre,
+        datosFactura.compania,
+        comparativa.tarifa.compania,
+        comparativa.ahorro,
+        d.pct_ahorro,
+        informeGuardado.short_id
+      );
+      respuesta = null; // plantilla enviada, no enviar texto adicional
+    } catch (e) {
+      // Fallback: si falla la plantilla, enviar texto con URL corta
+      console.error('[procesarFactura] Fallback a texto:', e.message);
+      respuesta += `\n${urlCorta}`;
+    }
+
+    metadata = { factura_id: factura.id, oferta_id: oferta.id, short_id: informeGuardado.short_id, url_informe: urlCorta };
   }
 
   return { respuesta, metadata };
 }
 
-// MANYCHAT
+// ─── MANYCHAT ─────────────────────────────────────────────────────────────────
 router.post('/manychat', async (req, res) => {
   try {
     const { subscriber_id, nombre, telefono, mensaje, tipo, archivo_url } = req.body;
@@ -145,7 +235,7 @@ router.post('/manychat', async (req, res) => {
       const base64 = Buffer.from(imageResponse.data).toString('base64');
       const mediaType = tipo === 'imagen' ? 'image/jpeg' : 'application/pdf';
       const resultado = await procesarFactura(base64, mediaType, usuario, telefono);
-      respuesta = resultado.respuesta;
+      respuesta = resultado.respuesta || '✅ Tu informe está listo. Revisa el botón que te hemos enviado.';
       metadata = resultado.metadata;
     } else {
       await db.guardarMensaje(usuario.id, 'user', mensaje);
@@ -159,19 +249,17 @@ router.post('/manychat', async (req, res) => {
   }
 });
 
-// CHATWOOT → WHATSAPP
+// ─── CHATWOOT → WHATSAPP ──────────────────────────────────────────────────────
 router.post('/chatwoot', async (req, res) => {
   try {
     res.status(200).send('OK');
     const { event, message_type, content, conversation } = req.body;
     const isPrivate = req.body.private === true || req.body.private === 'true';
     if (event !== 'message_created' || message_type !== 'outgoing' || isPrivate || !content?.trim()) return;
-
     const phoneRaw = conversation?.meta?.sender?.phone_number;
     if (!phoneRaw) return;
     const phone = phoneRaw.replace(/[\s+\-()]/g, '');
     await enviarMensajeWhatsApp(phone, content);
-
     try {
       const { data: usuarios } = await db.supabase.from('usuarios').select('id').eq('telefono', phone).limit(1);
       if (usuarios?.length > 0) await db.guardarMensaje(usuarios[0].id, 'assistant', content, { fuente: 'agente_chatwoot' });
@@ -179,7 +267,7 @@ router.post('/chatwoot', async (req, res) => {
   } catch (error) { console.error('Error chatwoot:', error); }
 });
 
-// WHATSAPP VERIFY
+// ─── WHATSAPP VERIFICACIÓN ────────────────────────────────────────────────────
 router.get('/whatsapp', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -188,7 +276,7 @@ router.get('/whatsapp', (req, res) => {
   else res.status(403).send('Forbidden');
 });
 
-// WHATSAPP → BOT
+// ─── WHATSAPP → BOT ───────────────────────────────────────────────────────────
 router.post('/whatsapp', async (req, res) => {
   try {
     res.status(200).send('OK');
@@ -234,9 +322,16 @@ router.post('/whatsapp', async (req, res) => {
       respuesta = await responderMensaje(historial, mensajeTexto);
     }
 
-    await db.guardarMensaje(usuario.id, 'assistant', respuesta, metadata);
-    await enviarMensajeWhatsApp(from, respuesta);
-    if (chatwootConvId) await enviarMensajeChatwoot(chatwootConvId, respuesta, true);
+    // Solo enviar texto si no se usó la plantilla (respuesta === null = plantilla enviada)
+    if (respuesta) {
+      await db.guardarMensaje(usuario.id, 'assistant', respuesta, metadata);
+      await enviarMensajeWhatsApp(from, respuesta);
+      if (chatwootConvId) await enviarMensajeChatwoot(chatwootConvId, respuesta, true);
+    } else {
+      const nota = `📊 Informe enviado con botón | ID: ${metadata.short_id} | URL: ${metadata.url_informe}`;
+      await db.guardarMensaje(usuario.id, 'assistant', nota, metadata);
+      if (chatwootConvId) await enviarMensajeChatwoot(chatwootConvId, nota, true);
+    }
 
   } catch (error) { console.error('Error WA:', error); }
 });
