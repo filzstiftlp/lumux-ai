@@ -516,14 +516,14 @@ router.post('/contrato', async (req, res) => {
       attachments,
     });
 
-    console.log(\`[Contrato] Email enviado → \${emailDestino} | short_id=\${short_id}\`);
+    console.log(`[Contrato] Email enviado → ${emailDestino} | short_id=${short_id}`);
 
     // ─── 4. WhatsApp de confirmación al cliente ────────────────────────────
     if (informeData?.telefono) {
       try {
         await enviarMensajeWhatsApp(
           informeData.telefono,
-          \`✅ ¡Todo listo! Hemos enviado tu solicitud de cambio a \${nueva_compania}.\n\nRecibirás el contrato para firmar en menos de 24h en \${email}.\n\n¿Tienes alguna duda? Escríbenos aquí mismo 💬\`
+          `✅ ¡Todo listo! Hemos enviado tu solicitud de cambio a ${nueva_compania}.\n\nRecibirás el contrato para firmar en menos de 24h en ${email}.\n\n¿Tienes alguna duda? Escríbenos aquí mismo 💬`
         );
       } catch(e) { console.error('[Contrato] WA confirm error:', e.message); }
     }
