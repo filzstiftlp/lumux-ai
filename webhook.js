@@ -491,7 +491,7 @@ router.post('/contrato', async (req, res) => {
       from:    `"Lumux AI" <${process.env.SMTP_USER}>`,
       to:      emailDestino,
       cc:      process.env.SMTP_USER,
-      subject: `🔄 Contratación ${nueva_compania} · ${nombre || 'Cliente'} · CUPS: ${cups}`,
+      subject: `TRAMITAR SIGUIENTE CONTRATO ALBERTO FDEZ LUMUX: ${nueva_compania} · ${nombre || 'Cliente'} · CUPS: ${cups}`,
       html: `
         <h2 style="font-family:sans-serif;color:#1e1b2a">Nueva solicitud de contratación · Lumux AI</h2>
         <table style="border-collapse:collapse;width:100%;font-family:sans-serif;font-size:14px;max-width:600px">
