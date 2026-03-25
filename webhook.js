@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 const FormData = require('form-data');
-const nodemailer = require('nodemailer');
+// Email via Resend API
 const db = require('./db');
 const {
   responderMensaje, analizarFactura, generarComparativa, generarUrlInforme,
@@ -462,51 +462,26 @@ router.post('/contrato', async (req, res) => {
       }
     }
 
-    // ─── 3. Enviar email al proveedor ──────────────────────────────────────
-    const smtpPort = parseInt(process.env.SMTP_PORT || '587');
-    const transporter = nodemailer.createTransport({
-      host:   process.env.SMTP_HOST || 'smtp.gmail.com',
-      port:   smtpPort,
-      secure: smtpPort === 465, // true para 465 (SSL), false para 587 (STARTTLS)
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-      tls: { rejectUnauthorized: false } // compatibilidad con Arsys
-    });
-
+    // ─── 3. Enviar email via Resend API ─────────────────────────────────────
     const cups     = informeData?.cups || informeData?.facturas?.cups || 'No disponible';
     const consumo  = informeData?.consumo_kwh || informeData?.facturas?.consumo_kwh || '—';
     const potencia = informeData?.potencia_kw  || informeData?.facturas?.potencia_kw  || '—';
     const compania_actual = informeData?.compania_actual || informeData?.facturas?.compania || '—';
 
     const attachments = [
-      {
-        filename:    dni_frontal_nombre || 'dni_frontal.jpg',
-        content:     dni_frontal_base64,
-        encoding:    'base64',
-        contentType: dni_frontal_tipo || 'image/jpeg',
-      },
-      {
-        filename:    dni_trasero_nombre || 'dni_trasero.jpg',
-        content:     dni_trasero_base64,
-        encoding:    'base64',
-        contentType: dni_trasero_tipo || 'image/jpeg',
-      },
+      { filename: dni_frontal_nombre || 'dni_frontal.jpg', content: dni_frontal_base64 },
+      { filename: dni_trasero_nombre || 'dni_trasero.jpg', content: dni_trasero_base64 },
     ];
-
     if (facturaBuffer) {
-      attachments.push({
-        filename:    'factura_cliente.pdf',
-        content:     facturaBuffer.toString('base64'),
-        encoding:    'base64',
-        contentType: 'application/pdf',
-      });
+      attachments.push({ filename: 'factura_cliente.pdf', content: facturaBuffer.toString('base64') });
     }
 
     const emailDestino = getEmailProveedor(nueva_compania);
 
-    await transporter.sendMail({
-      from:    `"Lumux AI" <${process.env.SMTP_USER}>`,
-      to:      emailDestino,
-      cc:      process.env.SMTP_USER,
+    await axios.post('https://api.resend.com/emails', {
+      from:    'Lumux AI <ceo@lumux.es>',
+      to:      [emailDestino],
+      cc:      process.env.SMTP_USER ? [process.env.SMTP_USER] : [],
       subject: `TRAMITAR SIGUIENTE CONTRATO ALBERTO FDEZ LUMUX: ${nueva_compania} · ${nombre || 'Cliente'} · CUPS: ${cups}`,
       html: `
         <h2 style="font-family:sans-serif;color:#1e1b2a">Nueva solicitud de contratación · Lumux AI</h2>
@@ -529,7 +504,12 @@ router.post('/contrato', async (req, res) => {
           Gestionado automáticamente por <strong>Lumux AI</strong> · lumux.es
         </p>
       `,
-      attachments,
+      attachments: attachments.map(a => ({ filename: a.filename, content: a.content })),
+    }, {
+      headers: {
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
     });
 
     console.log(`[Contrato] Email enviado → ${emailDestino} | short_id=${short_id}`);
