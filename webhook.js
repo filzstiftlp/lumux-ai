@@ -449,11 +449,13 @@ router.post('/contrato', async (req, res) => {
     }
 
     // ─── 3. Enviar email al proveedor ──────────────────────────────────────
+    const smtpPort = parseInt(process.env.SMTP_PORT || '587');
     const transporter = nodemailer.createTransport({
       host:   process.env.SMTP_HOST || 'smtp.gmail.com',
-      port:   parseInt(process.env.SMTP_PORT || '587'),
-      secure: false,
+      port:   smtpPort,
+      secure: smtpPort === 465, // true para 465 (SSL), false para 587 (STARTTLS)
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      tls: { rejectUnauthorized: false } // compatibilidad con Arsys
     });
 
     const cups     = informeData?.cups || informeData?.facturas?.cups || 'No disponible';
