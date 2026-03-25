@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 const FormData = require('form-data');
-// Email via Resend API
+const nodemailer = require('nodemailer');
 const db = require('./db');
 const {
   responderMensaje, analizarFactura, generarComparativa, generarUrlInforme,
@@ -156,7 +156,7 @@ async function enviarPlantillaInforme(telefono, nombre, companiaActual, nuevaCom
 }
 
 // ─── PROCESAR FACTURA ─────────────────────────────────────────────────────────
-async function procesarFactura(base64, mediaType, usuario, telefono) {
+async function procesarFactura(base64, mediaType, usuario, telefono, facturaStorageUrl = null) {
   const datosFactura = await analizarFactura(base64, mediaType);
   if (!datosFactura) {
     return { respuesta: '❌ No he podido leer la factura. ¿Puedes enviarla más clara o en PDF?', metadata: {} };
@@ -173,6 +173,8 @@ async function procesarFactura(base64, mediaType, usuario, telefono) {
     precio_total:     datosFactura.precio_total,
     dias_facturacion: datosFactura.dias_facturacion,
     fecha_factura:    datosFactura.fecha_factura,
+    archivo_url:      facturaStorageUrl,
+    cups:             datosFactura.cups || null,
     raw_texto_ocr:    JSON.stringify(datosFactura)
   });
 
@@ -355,7 +357,24 @@ router.post('/whatsapp', async (req, res) => {
       const imageResponse = await axios.get(archivoUrl, { responseType: 'arraybuffer', headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } });
       const fileBuffer = Buffer.from(imageResponse.data);
       if (chatwootConvId) await enviarArchivoChatwoot(chatwootConvId, fileBuffer, fileName, mediaType);
-      const resultado = await procesarFactura(fileBuffer.toString('base64'), mediaType, usuario, from);
+
+      // Guardar factura en Supabase Storage para adjuntarla al email de contrato
+      let facturaStorageUrl = null;
+      try {
+        const storageFileName = `facturas/${usuario.id}_${Date.now()}_${fileName}`;
+        const { data: storageData, error: storageError } = await db.supabase.storage
+          .from('facturas')
+          .upload(storageFileName, fileBuffer, { contentType: mediaType, upsert: false });
+        if (!storageError) {
+          const { data: urlData } = db.supabase.storage.from('facturas').getPublicUrl(storageFileName);
+          facturaStorageUrl = urlData?.publicUrl || null;
+          console.log('[Storage] Factura guardada:', facturaStorageUrl);
+        } else {
+          console.error('[Storage] Error:', storageError.message);
+        }
+      } catch(se) { console.error('[Storage] Exception:', se.message); }
+
+      const resultado = await procesarFactura(fileBuffer.toString('base64'), mediaType, usuario, from, facturaStorageUrl);
       respuesta = resultado.respuesta;
       metadata = resultado.metadata;
     } else {
@@ -448,25 +467,49 @@ router.post('/contrato', async (req, res) => {
       }
     }
 
-    // ─── 3. Enviar email via Resend API (HTTP) ──────────────────────────────
+    // ─── 3. Enviar email al proveedor ──────────────────────────────────────
+    const smtpPort = parseInt(process.env.SMTP_PORT || '587');
+    const transporter = nodemailer.createTransport({
+      host:   process.env.SMTP_HOST || 'smtp.gmail.com',
+      port:   smtpPort,
+      secure: smtpPort === 465, // true para 465 (SSL), false para 587 (STARTTLS)
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      tls: { rejectUnauthorized: false } // compatibilidad con Arsys
+    });
+
     const cups     = informeData?.cups || informeData?.facturas?.cups || 'No disponible';
     const consumo  = informeData?.consumo_kwh || informeData?.facturas?.consumo_kwh || '—';
     const potencia = informeData?.potencia_kw  || informeData?.facturas?.potencia_kw  || '—';
     const compania_actual = informeData?.compania_actual || informeData?.facturas?.compania || '—';
 
     const attachments = [
-      { filename: dni_frontal_nombre || 'dni_frontal.jpg', content: dni_frontal_base64 },
-      { filename: dni_trasero_nombre || 'dni_trasero.jpg', content: dni_trasero_base64 },
+      {
+        filename:    dni_frontal_nombre || 'dni_frontal.jpg',
+        content:     dni_frontal_base64,
+        encoding:    'base64',
+        contentType: dni_frontal_tipo || 'image/jpeg',
+      },
+      {
+        filename:    dni_trasero_nombre || 'dni_trasero.jpg',
+        content:     dni_trasero_base64,
+        encoding:    'base64',
+        contentType: dni_trasero_tipo || 'image/jpeg',
+      },
     ];
 
     if (facturaBuffer) {
-      attachments.push({ filename: 'factura_cliente.pdf', content: facturaBuffer.toString('base64') });
+      attachments.push({
+        filename:    'factura_cliente.pdf',
+        content:     facturaBuffer.toString('base64'),
+        encoding:    'base64',
+        contentType: 'application/pdf',
+      });
     }
 
     const emailDestino = getEmailProveedor(nueva_compania);
 
-    await axios.post('https://api.resend.com/emails', {
-      from:    'Lumux AI <onboarding@resend.dev>',
+    await transporter.sendMail({
+      from:    'Lumux AI <ceo@lumux.es>',
       to:      [emailDestino],
       cc:      process.env.SMTP_USER ? [process.env.SMTP_USER] : [],
       subject: `TRAMITAR SIGUIENTE CONTRATO ALBERTO FDEZ LUMUX: ${nueva_compania} · ${nombre || 'Cliente'} · CUPS: ${cups}`,
@@ -491,9 +534,7 @@ router.post('/contrato', async (req, res) => {
           Gestionado automáticamente por <strong>Lumux AI</strong> · lumux.es
         </p>
       `,
-      attachments: attachments.map(a => ({ filename: a.filename, content: a.content })),
-    }, {
-      headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' }
+      attachments,
     });
 
     console.log(`[Contrato] Email enviado → ${emailDestino} | short_id=${short_id}`);
