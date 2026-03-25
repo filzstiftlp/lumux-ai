@@ -156,7 +156,7 @@ async function enviarPlantillaInforme(telefono, nombre, companiaActual, nuevaCom
 }
 
 // ─── PROCESAR FACTURA ─────────────────────────────────────────────────────────
-async function procesarFactura(base64, mediaType, usuario, telefono, facturaStorageUrl = null) {
+async function procesarFactura(base64, mediaType, usuario, telefono) {
   const datosFactura = await analizarFactura(base64, mediaType);
   if (!datosFactura) {
     return { respuesta: '❌ No he podido leer la factura. ¿Puedes enviarla más clara o en PDF?', metadata: {} };
@@ -173,10 +173,14 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     precio_total:     datosFactura.precio_total,
     dias_facturacion: datosFactura.dias_facturacion,
     fecha_factura:    datosFactura.fecha_factura,
-    archivo_url:      facturaStorageUrl,
-    cups:             datosFactura.cups || null,
     raw_texto_ocr:    JSON.stringify(datosFactura)
   });
+
+  // Guard: si la factura no se guardó, no continuar
+  if (!factura) {
+    console.error('[procesarFactura] guardarFactura devolvió null');
+    return { respuesta: '❌ Error guardando la factura. Inténtalo de nuevo.', metadata: {} };
+  }
 
   const { data: tarifas } = await db.supabase
     .from('tarifas').select('*')
@@ -206,6 +210,14 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     const d = comparativa.datosComparativa;
 
     // 1. Guardar informe con short_id
+    // Guardar URL de factura en Storage si existe
+    let facturaStorageUrl2 = null;
+    try {
+      if (typeof facturaStorageUrl !== 'undefined' && facturaStorageUrl) {
+        facturaStorageUrl2 = facturaStorageUrl;
+      }
+    } catch(e) {}
+
     const informeGuardado = await db.guardarInforme({
       usuario_id:        usuario.id,
       factura_id:        factura.id,
@@ -357,24 +369,7 @@ router.post('/whatsapp', async (req, res) => {
       const imageResponse = await axios.get(archivoUrl, { responseType: 'arraybuffer', headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } });
       const fileBuffer = Buffer.from(imageResponse.data);
       if (chatwootConvId) await enviarArchivoChatwoot(chatwootConvId, fileBuffer, fileName, mediaType);
-
-      // Guardar factura en Supabase Storage para adjuntarla al email de contrato
-      let facturaStorageUrl = null;
-      try {
-        const storageFileName = `facturas/${usuario.id}_${Date.now()}_${fileName}`;
-        const { data: storageData, error: storageError } = await db.supabase.storage
-          .from('facturas')
-          .upload(storageFileName, fileBuffer, { contentType: mediaType, upsert: false });
-        if (!storageError) {
-          const { data: urlData } = db.supabase.storage.from('facturas').getPublicUrl(storageFileName);
-          facturaStorageUrl = urlData?.publicUrl || null;
-          console.log('[Storage] Factura guardada:', facturaStorageUrl);
-        } else {
-          console.error('[Storage] Error:', storageError.message);
-        }
-      } catch(se) { console.error('[Storage] Exception:', se.message); }
-
-      const resultado = await procesarFactura(fileBuffer.toString('base64'), mediaType, usuario, from, facturaStorageUrl);
+      const resultado = await procesarFactura(fileBuffer.toString('base64'), mediaType, usuario, from);
       respuesta = resultado.respuesta;
       metadata = resultado.metadata;
     } else {
@@ -509,9 +504,9 @@ router.post('/contrato', async (req, res) => {
     const emailDestino = getEmailProveedor(nueva_compania);
 
     await transporter.sendMail({
-      from:    'Lumux AI <ceo@lumux.es>',
-      to:      [emailDestino],
-      cc:      process.env.SMTP_USER ? [process.env.SMTP_USER] : [],
+      from:    `"Lumux AI" <${process.env.SMTP_USER}>`,
+      to:      emailDestino,
+      cc:      process.env.SMTP_USER,
       subject: `TRAMITAR SIGUIENTE CONTRATO ALBERTO FDEZ LUMUX: ${nueva_compania} · ${nombre || 'Cliente'} · CUPS: ${cups}`,
       html: `
         <h2 style="font-family:sans-serif;color:#1e1b2a">Nueva solicitud de contratación · Lumux AI</h2>
