@@ -410,6 +410,12 @@ router.post('/contrato', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Faltan datos obligatorios' });
     }
 
+    // ✅ RESPONDER AL CLIENTE INMEDIATAMENTE - todo lo demás va en background
+    res.json({ ok: true });
+
+    // Todo el procesamiento en background (no bloquea al cliente)
+    setImmediate(async () => { try {
+
     // ─── 1. Obtener informe + factura de Supabase ──────────────────────────
     let informeData = null;
     let facturaBuffer = null;
@@ -489,8 +495,7 @@ router.post('/contrato', async (req, res) => {
 
     const emailDestino = getEmailProveedor(nueva_compania);
 
-    // Email en segundo plano - no bloquea la respuesta al cliente
-    const enviarEmailAsync = async () => { try { await transporter.sendMail({
+    await transporter.sendMail({
       from:    `"Lumux AI" <${process.env.SMTP_USER}>`,
       to:      emailDestino,
       cc:      process.env.SMTP_USER,
@@ -520,13 +525,8 @@ router.post('/contrato', async (req, res) => {
     });
 
     console.log(`[Contrato] Email enviado → ${emailDestino} | short_id=${short_id}`);
-    } catch(emailErr) { console.error('[Contrato] Email error:', emailErr.message); } };
-    enviarEmailAsync(); // no await - async
 
-    // ─── 4. Responder éxito inmediatamente al cliente ──────────────────────
-    res.json({ ok: true });
-
-    // ─── 5. WhatsApp de confirmación (en segundo plano) ──────────────────
+    // ─── 4. WhatsApp de confirmación al cliente ────────────────────────────
     if (informeData?.telefono) {
       try {
         await enviarMensajeWhatsApp(
@@ -538,7 +538,12 @@ router.post('/contrato', async (req, res) => {
 
   } catch (error) {
     console.error('[Contrato] Error:', error);
-    res.status(500).json({ ok: false, error: error.message });
+    // res already sent, just log
+  } }); // fin setImmediate
+
+  } catch (error) {
+    console.error('[Contrato] Error inicial:', error);
+    if (!res.headersSent) res.status(500).json({ ok: false, error: error.message });
   }
 });
 
