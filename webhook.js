@@ -489,7 +489,8 @@ router.post('/contrato', async (req, res) => {
 
     const emailDestino = getEmailProveedor(nueva_compania);
 
-    await transporter.sendMail({
+    // Email en segundo plano - no bloquea la respuesta al cliente
+    const enviarEmailAsync = async () => { try { await transporter.sendMail({
       from:    `"Lumux AI" <${process.env.SMTP_USER}>`,
       to:      emailDestino,
       cc:      process.env.SMTP_USER,
@@ -519,8 +520,13 @@ router.post('/contrato', async (req, res) => {
     });
 
     console.log(`[Contrato] Email enviado → ${emailDestino} | short_id=${short_id}`);
+    } catch(emailErr) { console.error('[Contrato] Email error:', emailErr.message); } };
+    enviarEmailAsync(); // no await - async
 
-    // ─── 4. WhatsApp de confirmación al cliente ────────────────────────────
+    // ─── 4. Responder éxito inmediatamente al cliente ──────────────────────
+    res.json({ ok: true });
+
+    // ─── 5. WhatsApp de confirmación (en segundo plano) ──────────────────
     if (informeData?.telefono) {
       try {
         await enviarMensajeWhatsApp(
@@ -529,8 +535,6 @@ router.post('/contrato', async (req, res) => {
         );
       } catch(e) { console.error('[Contrato] WA confirm error:', e.message); }
     }
-
-    res.json({ ok: true });
 
   } catch (error) {
     console.error('[Contrato] Error:', error);
