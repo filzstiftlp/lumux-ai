@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 const FormData = require('form-data');
+const nodemailer = require('nodemailer');
 const db = require('./db');
 const {
   responderMensaje, analizarFactura, generarComparativa, generarUrlInforme,
@@ -375,6 +376,164 @@ router.post('/whatsapp', async (req, res) => {
     }
 
   } catch (error) { console.error('Error WA:', error); }
+});
+
+// ─── HELPER: email por compañía ──────────────────────────────────────────────
+function getEmailProveedor(compania) {
+  const mapa = {
+    'iberdrola':  process.env.EMAIL_IBERDROLA,
+    'endesa':     process.env.EMAIL_ENDESA,
+    'repsol':     process.env.EMAIL_REPSOL,
+    'naturgy':    process.env.EMAIL_NATURGY,
+    'octopus':    process.env.EMAIL_OCTOPUS,
+    'gana':       process.env.EMAIL_GANA,
+    'aenergetic': process.env.EMAIL_AENERGETIC,
+  };
+  const clave = (compania || '').toLowerCase();
+  for (const [k, v] of Object.entries(mapa)) {
+    if (clave.includes(k) && v) return v;
+  }
+  return process.env.EMAIL_SOPORTE || process.env.SMTP_USER;
+}
+
+// ─── /webhook/contrato ────────────────────────────────────────────────────────
+router.post('/contrato', async (req, res) => {
+  try {
+    const {
+      short_id, nombre, nueva_compania, nueva_tarifa, ahorro_anual,
+      email, iban,
+      dni_frontal_base64, dni_frontal_tipo, dni_frontal_nombre,
+      dni_trasero_base64, dni_trasero_tipo, dni_trasero_nombre,
+    } = req.body;
+
+    if (!email || !iban || !dni_frontal_base64 || !dni_trasero_base64) {
+      return res.status(400).json({ ok: false, error: 'Faltan datos obligatorios' });
+    }
+
+    // ─── 1. Obtener informe + factura de Supabase ──────────────────────────
+    let informeData = null;
+    let facturaBuffer = null;
+
+    if (short_id) {
+      const { data } = await db.supabase
+        .from('informes')
+        .select('*, facturas(archivo_url, compania, consumo_kwh, potencia_kw, cups)')
+        .eq('short_id', short_id)
+        .single();
+      informeData = data;
+
+      // Descargar factura para adjuntar al email
+      const facturaUrl = data?.facturas?.archivo_url;
+      if (facturaUrl) {
+        try {
+          const r = await axios.get(facturaUrl, { responseType: 'arraybuffer' });
+          facturaBuffer = Buffer.from(r.data);
+        } catch(e) { console.error('[Contrato] No se pudo descargar factura:', e.message); }
+      }
+    }
+
+    // ─── 2. Guardar titular en Supabase ────────────────────────────────────
+    if (informeData?.usuario_id) {
+      await db.supabase.from('titulares').upsert({
+        usuario_id:      informeData.usuario_id,
+        email,
+        cuenta_bancaria: iban.replace(/\s/g, '').toUpperCase(),
+        updated_at:      new Date().toISOString(),
+      }, { onConflict: 'usuario_id' });
+
+      if (informeData.oferta_id) {
+        await db.supabase.from('ofertas')
+          .update({ estado: 'firmada', fecha_firmado: new Date().toISOString() })
+          .eq('id', informeData.oferta_id);
+      }
+    }
+
+    // ─── 3. Enviar email al proveedor ──────────────────────────────────────
+    const transporter = nodemailer.createTransport({
+      host:   process.env.SMTP_HOST || 'smtp.gmail.com',
+      port:   parseInt(process.env.SMTP_PORT || '587'),
+      secure: false,
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    });
+
+    const cups     = informeData?.cups || informeData?.facturas?.cups || 'No disponible';
+    const consumo  = informeData?.consumo_kwh || informeData?.facturas?.consumo_kwh || '—';
+    const potencia = informeData?.potencia_kw  || informeData?.facturas?.potencia_kw  || '—';
+    const compania_actual = informeData?.compania_actual || informeData?.facturas?.compania || '—';
+
+    const attachments = [
+      {
+        filename:    dni_frontal_nombre || 'dni_frontal.jpg',
+        content:     dni_frontal_base64,
+        encoding:    'base64',
+        contentType: dni_frontal_tipo || 'image/jpeg',
+      },
+      {
+        filename:    dni_trasero_nombre || 'dni_trasero.jpg',
+        content:     dni_trasero_base64,
+        encoding:    'base64',
+        contentType: dni_trasero_tipo || 'image/jpeg',
+      },
+    ];
+
+    if (facturaBuffer) {
+      attachments.push({
+        filename:    'factura_cliente.pdf',
+        content:     facturaBuffer.toString('base64'),
+        encoding:    'base64',
+        contentType: 'application/pdf',
+      });
+    }
+
+    const emailDestino = getEmailProveedor(nueva_compania);
+
+    await transporter.sendMail({
+      from:    `"Lumux AI" <${process.env.SMTP_USER}>`,
+      to:      emailDestino,
+      cc:      process.env.SMTP_USER,
+      subject: `🔄 Contratación ${nueva_compania} · ${nombre || 'Cliente'} · CUPS: ${cups}`,
+      html: `
+        <h2 style="font-family:sans-serif;color:#1e1b2a">Nueva solicitud de contratación · Lumux AI</h2>
+        <table style="border-collapse:collapse;width:100%;font-family:sans-serif;font-size:14px;max-width:600px">
+          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold;width:200px">Nombre titular</td><td style="padding:10px">${nombre || '—'}</td></tr>
+          <tr><td style="padding:10px;font-weight:bold">Email cliente</td><td style="padding:10px">${email}</td></tr>
+          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold">IBAN</td><td style="padding:10px;font-family:monospace">${iban}</td></tr>
+          <tr><td style="padding:10px;font-weight:bold">CUPS</td><td style="padding:10px;font-family:monospace">${cups}</td></tr>
+          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold">Compañía actual</td><td style="padding:10px">${compania_actual}</td></tr>
+          <tr><td style="padding:10px;font-weight:bold">Consumo factura</td><td style="padding:10px">${consumo} kWh</td></tr>
+          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold">Potencia</td><td style="padding:10px">${potencia} kW</td></tr>
+          <tr><td style="padding:10px;font-weight:bold">Compañía destino</td><td style="padding:10px"><strong style="color:#16a34a">${nueva_compania}</strong></td></tr>
+          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold">Tarifa</td><td style="padding:10px">${nueva_tarifa || '—'}</td></tr>
+          <tr><td style="padding:10px;font-weight:bold">Ahorro estimado</td><td style="padding:10px;color:#16a34a;font-weight:bold">${ahorro_anual}€/año</td></tr>
+          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold">Ref. Lumux</td><td style="padding:10px;font-family:monospace">${short_id || '—'}</td></tr>
+          <tr><td style="padding:10px;font-weight:bold">Fecha solicitud</td><td style="padding:10px">${new Date().toLocaleString('es-ES')}</td></tr>
+        </table>
+        <p style="margin-top:16px;font-size:12px;color:#64748b;font-family:sans-serif">
+          Adjuntos: DNI cara delantera · DNI cara trasera · Factura original<br>
+          Gestionado automáticamente por <strong>Lumux AI</strong> · lumux.es
+        </p>
+      `,
+      attachments,
+    });
+
+    console.log(\`[Contrato] Email enviado → \${emailDestino} | short_id=\${short_id}\`);
+
+    // ─── 4. WhatsApp de confirmación al cliente ────────────────────────────
+    if (informeData?.telefono) {
+      try {
+        await enviarMensajeWhatsApp(
+          informeData.telefono,
+          \`✅ ¡Todo listo! Hemos enviado tu solicitud de cambio a \${nueva_compania}.\n\nRecibirás el contrato para firmar en menos de 24h en \${email}.\n\n¿Tienes alguna duda? Escríbenos aquí mismo 💬\`
+        );
+      } catch(e) { console.error('[Contrato] WA confirm error:', e.message); }
+    }
+
+    res.json({ ok: true });
+
+  } catch (error) {
+    console.error('[Contrato] Error:', error);
+    res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 module.exports = router;
