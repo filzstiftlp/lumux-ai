@@ -107,7 +107,7 @@ CAMPOS REQUERIDOS:
   "precio_potencia_dia_p2": precio €/kW/día de potencia P2 o null,
   "importe_energia": importe total en € solo de energía (sin impuestos ni potencia),
   "importe_potencia": importe total en € solo de potencia (sin impuestos),
-  "precio_total": importe TOTAL a pagar en € (con todos los impuestos incluidos),
+  "precio_total": ⚠️ CRÍTICO: USA el subtotal de electricidad ANTES de descuentos promocionales temporales. Si la factura muestra líneas separadas como "PARA TI", "Descuento bienvenida", "Dto. fidelización", "Bonificación comercial" u otras FUERA del bloque estándar de Descuentos de tarifa, IGNÓRALAS COMPLETAMENTE. Usa el importe JUSTO antes de esas líneas adicionales. EJEMPLO: si aparece "TOTAL ELECTRICIDAD 46,59€" luego "PARA TI -20,00€" luego "TOTAL A PAGAR 32,37€", entonces precio_total = 46.59 (NO 32.37),
   "cups": "código CUPS" o null,
   "tiene_autoconsumo": true o false,
   "tiene_bateria_virtual": true o false,
@@ -122,7 +122,7 @@ REGLAS IMPORTANTES:
 - consumo_kwh: SIEMPRE suma P1+P2+P3 si hay periodos. Ejemplo: 298+205+367 = 870 kWh
 - precio_kwh: DIVIDE importe_energia / consumo_kwh. NO uses precios de líneas individuales
 - precio_potencia_dia: es el precio UNITARIO €/kW/día (ej: 0.097), NO el importe total
-- precio_total: el importe final total de la factura incluyendo IVA e impuestos
+- precio_total: USA siempre el subtotal ANTES de descuentos promocionales tipo "PARA TI", "Bienvenida", "Dto. fidelización". Si ves "TOTAL 46,59€" → "PARA TI -20€" → "TOTAL A PAGAR 32,37€", precio_total = 46.59
 - Si no aparece un dato, pon null`
         }
       ]

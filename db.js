@@ -30,13 +30,32 @@ async function getOrCreateUsuario(subscriberId, datos = {}) {
 }
 
 async function getHistorial(usuarioId) {
+  // FIX: obtener los 20 MÁS RECIENTES (no los más antiguos)
   const { data } = await supabase
     .from('mensajes')
-    .select('rol, mensaje')
+    .select('rol, mensaje, created_at')
     .eq('usuario_id', usuarioId)
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .limit(20);
-  return data || [];
+
+  const mensajes = (data || []).reverse(); // orden cronológico para Claude
+
+  // Garantizar que el [ANÁLISIS FACTURA] más reciente SIEMPRE está incluido
+  const yaHayAnalisis = mensajes.some(m => m.mensaje && m.mensaje.startsWith('[ANÁLISIS FACTURA]'));
+  if (!yaHayAnalisis) {
+    const { data: analisis } = await supabase
+      .from('mensajes')
+      .select('rol, mensaje')
+      .eq('usuario_id', usuarioId)
+      .ilike('mensaje', '[ANÁLISIS FACTURA]%')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (analisis && analisis.length > 0) {
+      mensajes.unshift({ rol: analisis[0].rol, mensaje: analisis[0].mensaje });
+    }
+  }
+
+  return mensajes;
 }
 
 async function guardarMensaje(usuarioId, rol, mensaje, metadata = {}) {
