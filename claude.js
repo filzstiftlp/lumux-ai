@@ -149,8 +149,8 @@ async function generarComparativa(datosFactura, tarifas) {
   const potencia     = datosFactura.potencia_kw || 4.4;
   const tieneTriperiodo = consumoP1 > 0 || consumoP2 > 0 || consumoP3 > 0;
 
-  const precioTotalSinImpuestos = datosFactura.precio_total / 1.2611;
-  const costeActualMes = precioTotalSinImpuestos * factor;
+  // Precio actual normalizado a 30 días (con todos los impuestos incluidos)
+  const costeActualMes = (datosFactura.precio_total / (datosFactura.dias_facturacion || 30)) * 30;
 
   let mejorTarifa = null;
   let mejorAhorro = 0;
@@ -188,7 +188,9 @@ async function generarComparativa(datosFactura, tarifas) {
       descuentoBV = excedentesMes * (tarifa.compensacion_excedentes || 0.06);
     }
 
-    const costeTarifa = costeEnergia + costePotencia + costeFijo - descuentoBV;
+    // Añadir impuestos al coste nuevo (Impuesto Eléctrico 5.11% + IVA 21%)
+    const costeTarifaSinImp = costeEnergia + costePotencia + costeFijo - descuentoBV;
+    const costeTarifa = costeTarifaSinImp * 1.2611;
     const ahorro = costeActualMes - costeTarifa;
 
     if (ahorro > 3 && mejorTarifa === null) {
