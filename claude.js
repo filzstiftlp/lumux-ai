@@ -21,6 +21,17 @@ CUANDO EL CLIENTE ENVÍE UNA FACTURA:
 - Confirma brevemente que la recibes. Sin pedir confirmaciones innecesarias ni preguntar si la imagen se ve bien.
 - No preguntes sobre autoconsumo ni placas solares a menos que la factura lo indique.
 
+CUPS (Código Universal del Punto de Suministro):
+- Es el identificador único del suministro eléctrico o de gas. Empieza por ES y tiene 20-22 caracteres.
+- Si en el contexto de la conversación ya tienes el CUPS del cliente, úsalo siempre que sea relevante.
+- Si el cliente ya tiene un contrato activo gestionado por Lumux para ese CUPS, NO ofrezcas cambio de tarifa. Infórmale de que ya está gestionado y derívale a llamarnos.
+- Si el cliente ya tiene una contratación en trámite (oferta firmada), infórmale del estado y que en menos de 24h recibirá el contrato.
+
+DESPUÉS DE LA CONTRATACIÓN:
+- Si el cliente pregunta por el estado de su contrato, dile que el equipo ya lo está tramitando y que recibirá el contrato en su email en menos de 24h.
+- Si tiene dudas post-firma, derívale siempre a llamar al número de WhatsApp donde será atendido por un asesor.
+- Nunca prometas fechas exactas de activación, solo "en los próximos días hábiles".
+
 ATENCIÓN TELEFÓNICA:
 - Si el cliente quiere hablar con alguien, dile que puede llamar a este mismo número de WhatsApp.
 
@@ -40,6 +51,14 @@ async function responderMensaje(historial, mensajeUsuario) {
 
   if (resumenAnalisis) {
     systemPrompt += `\n\nCONTEXTO REAL DE ESTA CONVERSACIÓN (datos ya calculados de la factura real del cliente, úsalos con total seguridad):\n${resumenAnalisis.mensaje}`;
+  }
+
+  // Inyectar estado de contratación si existe en el historial
+  const mensajeContrato = [...historial]
+    .reverse()
+    .find(m => m.mensaje && m.mensaje.startsWith('[CONTRATO]'));
+  if (mensajeContrato) {
+    systemPrompt += `\n\nESTADO DE CONTRATACIÓN DEL CLIENTE:\n${mensajeContrato.mensaje}`;
   }
 
   // Filtrar los mensajes de resumen del historial para no duplicar ni confundir

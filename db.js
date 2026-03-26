@@ -120,6 +120,65 @@ async function getInformePorShortId(shortId) {
   return data;
 }
 
+// ─── CUPS / PROPIEDADES ───────────────────────────────────────────────────────
+
+/**
+ * Guarda o actualiza una propiedad por CUPS (unique).
+ * Devuelve { propiedad, contratoActivo }
+ * - propiedad: el registro de propiedades
+ * - contratoActivo: contrato activo si existe, null si no
+ */
+async function guardarOActualizarPropiedad(usuarioId, cups, extraDatos = {}) {
+  if (!cups) return { propiedad: null, contratoActivo: null };
+
+  // Buscar si ya existe la propiedad con ese CUPS
+  const { data: existente } = await supabase
+    .from('propiedades')
+    .select('id, usuario_id')
+    .eq('cups', cups)
+    .single();
+
+  let propiedad;
+  if (existente) {
+    propiedad = existente;
+  } else {
+    const { data: nueva } = await supabase
+      .from('propiedades')
+      .insert({ usuario_id: usuarioId, cups, ...extraDatos })
+      .select()
+      .single();
+    propiedad = nueva;
+  }
+
+  if (!propiedad) return { propiedad: null, contratoActivo: null };
+
+  // Comprobar si hay contrato activo sobre esa propiedad
+  const { data: contrato } = await supabase
+    .from('contratos')
+    .select('id, compania, fecha_contrato, estado')
+    .eq('propiedad_id', propiedad.id)
+    .eq('estado', 'activo')
+    .order('fecha_contrato', { ascending: false })
+    .limit(1)
+    .single();
+
+  // También comprobar si hay oferta firmada reciente (contrato en curso sin registrar aún)
+  let ofertaFirmada = null;
+  if (!contrato) {
+    const { data: oferta } = await supabase
+      .from('ofertas')
+      .select('id, estado, fecha_firmado, tarifas(compania, nombre_tarifa)')
+      .eq('usuario_id', existente?.usuario_id || usuarioId)
+      .eq('estado', 'firmada')
+      .order('fecha_firmado', { ascending: false })
+      .limit(1)
+      .single();
+    ofertaFirmada = oferta || null;
+  }
+
+  return { propiedad, contratoActivo: contrato || null, ofertaFirmada };
+}
+
 module.exports = {
   supabase,
   getOrCreateUsuario,
@@ -131,4 +190,5 @@ module.exports = {
   actualizarEstado,
   guardarInforme,
   getInformePorShortId,
+  guardarOActualizarPropiedad,
 };
