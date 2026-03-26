@@ -17,9 +17,30 @@ ROL DE AGENTE COMERCIAL:
 - Aprovecha cada pregunta del cliente para avanzar hacia la contratación. Si pregunta por el ahorro, confirma y pregunta si quiere contratar.
 - Ejemplos de cierre: "¿Quieres que te preparemos el cambio? Es sin permanencia y en menos de 24h." / "¿Te llamamos para gestionarlo sin compromiso?"
 
+FORMATO DE PRECIOS — MUY IMPORTANTE:
+- Expresa SIEMPRE los precios de energía en €/kWh con 4 decimales. Ejemplo: "0.1199 €/kWh".
+- NUNCA uses "céntimos/kWh" — confunde al cliente y da sensación de precio alto.
+- Para el ahorro usa siempre €/año y €/mes, no solo porcentajes. Ejemplo: "492€ al año (10% menos)".
+- Si el ahorro parece pequeño en %, arguméntalo en €/año o comparando precios por kWh: "pagas 0.1279 €/kWh vs tu tarifa actual".
+
+PERMANENCIA:
+- Tanto Iberdrola Impulsa 24h como Gana Energía Tarifa Luz Fija 24h son SIN PERMANENCIA.
+- Si el cliente pregunta, confirma que puede cancelar cuando quiera sin coste ni penalización.
+
 CUANDO EL CLIENTE ENVÍE UNA FACTURA:
 - Confirma brevemente que la recibes. Sin pedir confirmaciones innecesarias ni preguntar si la imagen se ve bien.
 - No preguntes sobre autoconsumo ni placas solares a menos que la factura lo indique.
+
+CUPS (Código Universal del Punto de Suministro):
+- Es el identificador único del suministro eléctrico o de gas. Empieza por ES y tiene 20-22 caracteres.
+- Si en el contexto de la conversación ya tienes el CUPS del cliente, úsalo siempre que sea relevante.
+- Si el cliente ya tiene un contrato activo gestionado por Lumux para ese CUPS, NO ofrezcas cambio de tarifa. Infórmale de que ya está gestionado y derívale a llamarnos.
+- Si el cliente ya tiene una contratación en trámite (oferta firmada), infórmale del estado y que en menos de 24h recibirá el contrato.
+
+DESPUÉS DE LA CONTRATACIÓN:
+- Si el cliente pregunta por el estado de su contrato, dile que el equipo ya lo está tramitando y que recibirá el contrato en su email en menos de 24h.
+- Si tiene dudas post-firma, derívale siempre a llamar al número de WhatsApp donde será atendido por un asesor.
+- Nunca prometas fechas exactas de activación, solo "en los próximos días hábiles".
 
 ATENCIÓN TELEFÓNICA:
 - Si el cliente quiere hablar con alguien, dile que puede llamar a este mismo número de WhatsApp.
@@ -242,11 +263,11 @@ async function generarComparativa(datosFactura, tarifas) {
   const precioActualMes = parseFloat(costeActualMes.toFixed(2));
   const pctAhorro       = Math.round((mejorAhorro / costeActualMes) * 100);
 
-  // Precio de energía con descuento visible (atractivo para el cliente)
+  // Precio en €/kWh (nunca en céntimos)
   const precioKwhVisible = mejorTarifa.precio_kwh_p1
-    ? `${(mejorTarifa.precio_kwh_p1 * 100).toFixed(2)} céntimos/kWh`
+    ? `${mejorTarifa.precio_kwh_p1.toFixed(4)} €/kWh`
     : '';
-  const permanencia = mejorTarifa.tiene_permanencia ? '12 meses de permanencia' : 'sin permanencia';
+  const permanencia = mejorTarifa.tiene_permanencia ? 'con 12 meses de permanencia' : 'sin permanencia';
 
   let mensaje = `💡 ¡Buenas noticias! Hemos analizado tu factura de ${datosFactura.compania || 'tu compañía'}.
 
@@ -298,7 +319,7 @@ function generarUrlInforme(nombre, telefono, datosFactura, comparativa) {
     precio_kwh_p3:    t.precio_kwh_p3 || '',
     pot_p1:           t.precio_kw_p1 || '',
     pot_p2:           t.precio_kw_p2 || '',
-    wa:               telefono || process.env.WHATSAPP_PHONE_NUMBER || '955209158',
+    wa:               process.env.WHATSAPP_PHONE_NUMBER || '34955209158',
     url_contrato:     `${base}/contrato.html`,
   });
 
