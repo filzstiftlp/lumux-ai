@@ -460,26 +460,45 @@ router.post('/contrato', async (req, res) => {
     if (short_id) {
       const { data: informe } = await db.supabase
         .from('informes')
-        .select(`*, facturas(id, archivo_url, compania, consumo_kwh, potencia_kw, precio_total, dias_facturacion, fecha_factura), ofertas(id, estado)`)
+        .select(`*, facturas(id, archivo_url, compania, consumo_kwh, potencia_kw, precio_total, dias_facturacion, fecha_factura, propiedad_id), ofertas(id, estado)`)
         .eq('short_id', short_id)
         .single();
 
       informeData = informe;
       facturaData = informe?.facturas;
 
-      // CUPS y dirección desde propiedades
-      if (informe?.usuario_id) {
+      // ── CUPS y dirección: seguir la cadena informe→factura→propiedad_id ──
+      // NUNCA buscar por usuario_id (riesgo de cruzar datos entre suministros)
+      const propiedadId = facturaData?.propiedad_id;
+      if (propiedadId) {
         const { data: prop } = await db.supabase
           .from('propiedades')
-          .select('cups, direccion, codigo_postal, ciudad, provincia')
-          .eq('usuario_id', informe.usuario_id)
-          .order('created_at', { ascending: false })
-          .limit(1)
+          .select('id, cups, direccion, codigo_postal, ciudad, provincia')
+          .eq('id', propiedadId)
           .single();
         propiedadData = prop;
+        console.log(`[Contrato] Propiedad obtenida por propiedad_id: ${propiedadId} → CUPS: ${prop?.cups}`);
+      } else if (informeData?.cups) {
+        // Fallback: usar el CUPS guardado en el informe directamente
+        const { data: prop } = await db.supabase
+          .from('propiedades')
+          .select('id, cups, direccion, codigo_postal, ciudad, provincia')
+          .eq('cups', informeData.cups)
+          .single();
+        propiedadData = prop;
+        console.log(`[Contrato] Propiedad obtenida por cups del informe: ${informeData.cups}`);
+      } else {
+        console.warn(`[Contrato] ⚠️ No hay propiedad_id en factura ni cups en informe — short_id: ${short_id}`);
       }
 
-      // Descargar factura original para adjuntar
+      // ── Verificación de integridad: CUPS del informe vs CUPS de la propiedad ──
+      if (informeData?.cups && propiedadData?.cups && informeData.cups !== propiedadData.cups) {
+        console.error(`[Contrato] ❌ INCONSISTENCIA CUPS: informe.cups=${informeData.cups} vs propiedad.cups=${propiedadData.cups}`);
+        // Usar siempre el del informe (es el que el cliente contrató)
+        propiedadData = { ...propiedadData, cups: informeData.cups };
+      }
+
+      // ── Descargar la factura VINCULADA A ESTE INFORME (no cualquier factura) ──
       const facturaUrl = facturaData?.archivo_url;
       if (facturaUrl) {
         try {
@@ -487,12 +506,12 @@ router.post('/contrato', async (req, res) => {
           facturaFileName = `factura_${(nombre || 'cliente').replace(/\s+/g, '_')}.${ext}`;
           const r = await axios.get(facturaUrl, { responseType: 'arraybuffer' });
           facturaBuffer = Buffer.from(r.data);
-          console.log(`[Contrato] Factura descargada: ${facturaBuffer.length} bytes`);
+          console.log(`[Contrato] ✅ Factura descargada: ${facturaBuffer.length} bytes | factura_id: ${facturaData?.id}`);
         } catch(e) {
           console.error('[Contrato] No se pudo descargar factura:', e.message);
         }
       } else {
-        console.warn('[Contrato] ⚠️ facturas.archivo_url vacío — factura NO adjunta');
+        console.warn(`[Contrato] ⚠️ facturas.archivo_url vacío para factura_id: ${facturaData?.id} — factura NO adjunta`);
       }
     }
 
