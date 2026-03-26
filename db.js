@@ -121,17 +121,12 @@ async function getInformePorShortId(shortId) {
 }
 
 // ─── CUPS / PROPIEDADES ───────────────────────────────────────────────────────
-
-/**
- * Guarda o actualiza una propiedad por CUPS (unique).
- * Devuelve { propiedad, contratoActivo }
- * - propiedad: el registro de propiedades
- * - contratoActivo: contrato activo si existe, null si no
- */
+// Devuelve { propiedad, contratoActivo, ofertaFirmada }
+// El bloqueo es SIEMPRE por CUPS concreto, nunca por usuario entero.
 async function guardarOActualizarPropiedad(usuarioId, cups, extraDatos = {}) {
-  if (!cups) return { propiedad: null, contratoActivo: null };
+  if (!cups) return { propiedad: null, contratoActivo: null, ofertaFirmada: null };
 
-  // Buscar si ya existe la propiedad con ese CUPS
+  // Buscar si ya existe ese CUPS en propiedades
   const { data: existente } = await supabase
     .from('propiedades')
     .select('id, usuario_id')
@@ -150,9 +145,9 @@ async function guardarOActualizarPropiedad(usuarioId, cups, extraDatos = {}) {
     propiedad = nueva;
   }
 
-  if (!propiedad) return { propiedad: null, contratoActivo: null };
+  if (!propiedad) return { propiedad: null, contratoActivo: null, ofertaFirmada: null };
 
-  // Comprobar si hay contrato activo sobre esa propiedad
+  // ── Contrato activo para ESTE CUPS ────────────────────────────────────────
   const { data: contrato } = await supabase
     .from('contratos')
     .select('id, compania, fecha_contrato, estado')
@@ -162,18 +157,29 @@ async function guardarOActualizarPropiedad(usuarioId, cups, extraDatos = {}) {
     .limit(1)
     .single();
 
-  // También comprobar si hay oferta firmada reciente (contrato en curso sin registrar aún)
+  // ── Oferta firmada para ESTE CUPS (via facturas.propiedad_id) ─────────────
+  // MUY IMPORTANTE: se filtra por propiedad_id, NO por usuario_id,
+  // para no bloquear otros suministros del mismo cliente.
   let ofertaFirmada = null;
   if (!contrato) {
-    const { data: oferta } = await supabase
-      .from('ofertas')
-      .select('id, estado, fecha_firmado, tarifas(compania, nombre_tarifa)')
-      .eq('usuario_id', existente?.usuario_id || usuarioId)
-      .eq('estado', 'firmada')
-      .order('fecha_firmado', { ascending: false })
-      .limit(1)
-      .single();
-    ofertaFirmada = oferta || null;
+    // Obtener IDs de facturas vinculadas a esta propiedad
+    const { data: facturaIds } = await supabase
+      .from('facturas')
+      .select('id')
+      .eq('propiedad_id', propiedad.id);
+
+    if (facturaIds && facturaIds.length > 0) {
+      const ids = facturaIds.map(f => f.id);
+      const { data: oferta } = await supabase
+        .from('ofertas')
+        .select('id, estado, fecha_firmado, tarifas(compania, nombre_tarifa)')
+        .eq('estado', 'firmada')
+        .in('factura_id', ids)
+        .order('fecha_firmado', { ascending: false })
+        .limit(1)
+        .single();
+      ofertaFirmada = oferta || null;
+    }
   }
 
   return { propiedad, contratoActivo: contrato || null, ofertaFirmada };
