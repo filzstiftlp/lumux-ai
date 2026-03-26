@@ -442,102 +442,195 @@ router.post('/contrato', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Faltan datos obligatorios' });
     }
 
-    // ─── 1. Obtener informe + factura de Supabase ──────────────────────────
+    // ─── 1. Obtener informe completo + factura + propiedad ────────────────
     let informeData = null;
+    let facturaData = null;
+    let propiedadData = null;
     let facturaBuffer = null;
+    let facturaFileName = 'factura_cliente.pdf';
 
     if (short_id) {
-      const { data } = await db.supabase
+      const { data: informe } = await db.supabase
         .from('informes')
-        .select('*, facturas(archivo_url, compania, consumo_kwh, potencia_kw, cups)')
+        .select(`
+          *,
+          facturas (
+            id, archivo_url, compania, consumo_kwh, potencia_kw,
+            precio_kwh, precio_potencia, precio_total, dias_facturacion, fecha_factura
+          ),
+          ofertas ( id, estado )
+        `)
         .eq('short_id', short_id)
         .single();
-      informeData = data;
+      informeData = informe;
+      facturaData = informe?.facturas;
 
-      // Descargar factura para adjuntar al email
-      const facturaUrl = data?.facturas?.archivo_url;
+      // Buscar CUPS y dirección en propiedades
+      if (informe?.usuario_id) {
+        const { data: prop } = await db.supabase
+          .from('propiedades')
+          .select('cups, direccion, codigo_postal, ciudad, provincia')
+          .eq('usuario_id', informe.usuario_id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        propiedadData = prop;
+      }
+
+      // ─── DESCARGAR FACTURA ORIGINAL para adjuntar ─────────────────────
+      const facturaUrl = facturaData?.archivo_url;
       if (facturaUrl) {
         try {
+          const ext = facturaUrl.match(/\.(pdf|jpg|jpeg|png)(\?|$)/i)?.[1] || 'jpg';
+          facturaFileName = `factura_${nombre || 'cliente'}.${ext}`;
           const r = await axios.get(facturaUrl, { responseType: 'arraybuffer' });
           facturaBuffer = Buffer.from(r.data);
-        } catch(e) { console.error('[Contrato] No se pudo descargar factura:', e.message); }
+          console.log(`[Contrato] Factura descargada: ${facturaBuffer.length} bytes (${ext})`);
+        } catch(e) {
+          console.error('[Contrato] No se pudo descargar factura:', e.message);
+        }
+      } else {
+        console.warn('[Contrato] No hay archivo_url en la factura — revisar si se subió a Storage');
       }
     }
 
-    // ─── 2. Guardar titular en Supabase ────────────────────────────────────
+    // ─── 2. Guardar titular + marcar oferta firmada ───────────────────────
     if (informeData?.usuario_id) {
       await db.supabase.from('titulares').upsert({
         usuario_id:      informeData.usuario_id,
+        nombre:          nombre || informeData.nombre,
         email,
         cuenta_bancaria: iban.replace(/\s/g, '').toUpperCase(),
         updated_at:      new Date().toISOString(),
       }, { onConflict: 'usuario_id' });
 
-      if (informeData.oferta_id) {
+      const ofertaId = informeData.oferta_id || informeData.ofertas?.id;
+      if (ofertaId) {
         await db.supabase.from('ofertas')
           .update({ estado: 'firmada', fecha_firmado: new Date().toISOString() })
-          .eq('id', informeData.oferta_id);
+          .eq('id', ofertaId);
       }
+      await db.actualizarEstado(informeData.usuario_id, 'contratado');
     }
 
-    // ─── 3. Enviar email via Resend API ─────────────────────────────────────
-    const cups     = informeData?.cups || informeData?.facturas?.cups || 'No disponible';
-    const consumo  = informeData?.consumo_kwh || informeData?.facturas?.consumo_kwh || '—';
-    const potencia = informeData?.potencia_kw  || informeData?.facturas?.potencia_kw  || '—';
-    const compania_actual = informeData?.compania_actual || informeData?.facturas?.compania || '—';
+    // ─── 3. Componer datos para el email ──────────────────────────────────
+    const cups          = propiedadData?.cups || 'No disponible';
+    const direccion     = [
+      propiedadData?.direccion,
+      propiedadData?.codigo_postal,
+      propiedadData?.ciudad,
+      propiedadData?.provincia,
+    ].filter(Boolean).join(', ') || '—';
+    const compania_actual = informeData?.compania_actual || facturaData?.compania || '—';
+    const consumo_total   = informeData?.consumo_kwh ?? facturaData?.consumo_kwh ?? '—';
+    const consumo_p1      = informeData?.consumo_p1_kwh ?? '—';
+    const consumo_p2      = informeData?.consumo_p2_kwh ?? '—';
+    const consumo_p3      = informeData?.consumo_p3_kwh ?? '—';
+    const potencia        = informeData?.potencia_kw ?? facturaData?.potencia_kw ?? '—';
+    const dias            = informeData?.dias_facturacion ?? facturaData?.dias_facturacion ?? '—';
+    const precio_actual   = informeData?.precio_actual_mes ?? facturaData?.precio_total ?? '—';
+    const precio_nuevo    = informeData?.precio_nuevo_mes ?? '—';
+    const pct_ahorro      = informeData?.pct_ahorro ?? '—';
+    const p_kwh_p1        = informeData?.precio_kwh_p1 ?? '—';
+    const p_kwh_p2        = informeData?.precio_kwh_p2 ?? '—';
+    const p_kwh_p3        = informeData?.precio_kwh_p3 ?? '—';
+    const p_pot_p1        = informeData?.precio_pot_p1 ?? '—';
+    const p_pot_p2        = informeData?.precio_pot_p2 ?? '—';
+    const p_fijo          = informeData?.precio_fijo_mes ?? '—';
+    const fecha_factura   = facturaData?.fecha_factura
+      ? new Date(facturaData.fecha_factura).toLocaleDateString('es-ES')
+      : '—';
 
+    // ─── 4. Adjuntos: DNI frontal + trasero + FACTURA ORIGINAL ───────────
     const attachments = [
       { filename: dni_frontal_nombre || 'dni_frontal.jpg', content: dni_frontal_base64 },
       { filename: dni_trasero_nombre || 'dni_trasero.jpg', content: dni_trasero_base64 },
     ];
     if (facturaBuffer) {
-      attachments.push({ filename: 'factura_cliente.pdf', content: facturaBuffer.toString('base64') });
+      attachments.push({ filename: facturaFileName, content: facturaBuffer.toString('base64') });
+    } else {
+      // Si no hay buffer, avisar en el log pero no bloquear el envío
+      console.warn('[Contrato] ⚠️ Email enviado SIN factura adjunta — archivo_url vacío en Supabase');
     }
 
+    // ─── 5. Enviar email ──────────────────────────────────────────────────
     const emailDestino = getEmailProveedor(nueva_compania);
+
+    const row = (label, value, bg = false) =>
+      `<tr style="${bg ? 'background:#f8fafc;' : ''}">
+        <td style="padding:9px 12px;font-weight:600;color:#374151;width:210px;border-bottom:1px solid #e5e7eb">${label}</td>
+        <td style="padding:9px 12px;color:#111827;border-bottom:1px solid #e5e7eb">${value}</td>
+      </tr>`;
 
     await axios.post('https://api.resend.com/emails', {
       from:    'Lumux AI <ceo@lumux.es>',
       to:      [emailDestino],
       cc:      process.env.SMTP_USER ? [process.env.SMTP_USER] : [],
-      subject: `TRAMITAR SIGUIENTE CONTRATO ALBERTO FDEZ LUMUX: ${nueva_compania} · ${nombre || 'Cliente'} · CUPS: ${cups}`,
+      subject: `CONTRATO LUMUX · ${nueva_compania} · ${nombre || 'Cliente'} · CUPS: ${cups}`,
       html: `
-        <h2 style="font-family:sans-serif;color:#1e1b2a">Nueva solicitud de contratación · Lumux AI</h2>
-        <table style="border-collapse:collapse;width:100%;font-family:sans-serif;font-size:14px;max-width:600px">
-          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold;width:200px">Nombre titular</td><td style="padding:10px">${nombre || '—'}</td></tr>
-          <tr><td style="padding:10px;font-weight:bold">Email cliente</td><td style="padding:10px">${email}</td></tr>
-          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold">IBAN</td><td style="padding:10px;font-family:monospace">${iban}</td></tr>
-          <tr><td style="padding:10px;font-weight:bold">CUPS</td><td style="padding:10px;font-family:monospace">${cups}</td></tr>
-          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold">Compañía actual</td><td style="padding:10px">${compania_actual}</td></tr>
-          <tr><td style="padding:10px;font-weight:bold">Consumo factura</td><td style="padding:10px">${consumo} kWh</td></tr>
-          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold">Potencia</td><td style="padding:10px">${potencia} kW</td></tr>
-          <tr><td style="padding:10px;font-weight:bold">Compañía destino</td><td style="padding:10px"><strong style="color:#16a34a">${nueva_compania}</strong></td></tr>
-          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold">Tarifa</td><td style="padding:10px">${nueva_tarifa || '—'}</td></tr>
-          <tr><td style="padding:10px;font-weight:bold">Ahorro estimado</td><td style="padding:10px;color:#16a34a;font-weight:bold">${ahorro_anual}€/año</td></tr>
-          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold">Ref. Lumux</td><td style="padding:10px;font-family:monospace">${short_id || '—'}</td></tr>
-          <tr><td style="padding:10px;font-weight:bold">Fecha solicitud</td><td style="padding:10px">${new Date().toLocaleString('es-ES')}</td></tr>
-        </table>
-        <p style="margin-top:16px;font-size:12px;color:#64748b;font-family:sans-serif">
-          Adjuntos: DNI cara delantera · DNI cara trasera · Factura original<br>
-          Gestionado automáticamente por <strong>Lumux AI</strong> · lumux.es
-        </p>
+        <div style="font-family:sans-serif;max-width:640px;margin:0 auto">
+          <div style="background:#1e1b2a;padding:20px 24px;border-radius:8px 8px 0 0">
+            <h2 style="margin:0;color:#fff;font-size:18px">⚡ Nueva solicitud de contratación · Lumux AI</h2>
+            <p style="margin:4px 0 0;color:#a78bfa;font-size:13px">Ref. ${short_id || '—'} · ${new Date().toLocaleString('es-ES')}</p>
+          </div>
+
+          <table style="border-collapse:collapse;width:100%;font-size:14px">
+            <tr><td colspan="2" style="padding:10px 12px;background:#f0fdf4;font-weight:700;color:#15803d;font-size:13px;letter-spacing:.05em">DATOS DEL TITULAR</td></tr>
+            ${row('Nombre titular',  nombre || '—', false)}
+            ${row('Email',          email,          true)}
+            ${row('IBAN',           `<span style="font-family:monospace">${iban}</span>`, false)}
+            ${row('Dirección',      direccion,      true)}
+            ${row('CUPS',           `<span style="font-family:monospace">${cups}</span>`, false)}
+
+            <tr><td colspan="2" style="padding:10px 12px;background:#eff6ff;font-weight:700;color:#1d4ed8;font-size:13px;letter-spacing:.05em">DATOS DE LA FACTURA ACTUAL</td></tr>
+            ${row('Compañía actual',    compania_actual,              false)}
+            ${row('Fecha factura',      fecha_factura,                true)}
+            ${row('Consumo total',      consumo_total !== '—' ? `${consumo_total} kWh` : '—', false)}
+            ${row('Consumo P1 (Punta)', consumo_p1 !== '—' ? `${consumo_p1} kWh` : '—', true)}
+            ${row('Consumo P2 (Llano)', consumo_p2 !== '—' ? `${consumo_p2} kWh` : '—', false)}
+            ${row('Consumo P3 (Valle)', consumo_p3 !== '—' ? `${consumo_p3} kWh` : '—', true)}
+            ${row('Potencia contratada',potencia !== '—' ? `${potencia} kW` : '—', false)}
+            ${row('Días facturación',   `${dias} días`,                true)}
+            ${row('Importe factura',    precio_actual !== '—' ? `${Number(precio_actual).toFixed(2)} €/mes` : '—', false)}
+
+            <tr><td colspan="2" style="padding:10px 12px;background:#f0fdf4;font-weight:700;color:#15803d;font-size:13px;letter-spacing:.05em">NUEVA TARIFA LUMUX</td></tr>
+            ${row('Compañía destino',   `<strong style="color:#16a34a">${nueva_compania}</strong>`, false)}
+            ${row('Tarifa',             nueva_tarifa || '—',          true)}
+            ${row('Precio P1 (kWh)',    p_kwh_p1 !== '—' ? `${p_kwh_p1} €/kWh` : '—', false)}
+            ${row('Precio P2 (kWh)',    p_kwh_p2 !== '—' ? `${p_kwh_p2} €/kWh` : '—', true)}
+            ${row('Precio P3 (kWh)',    p_kwh_p3 !== '—' ? `${p_kwh_p3} €/kWh` : '—', false)}
+            ${row('Precio potencia P1', p_pot_p1 !== '—' ? `${p_pot_p1} €/kW·día` : '—', true)}
+            ${row('Precio potencia P2', p_pot_p2 !== '—' ? `${p_pot_p2} €/kW·día` : '—', false)}
+            ${row('Cuota fija mes',     p_fijo !== '—' ? `${p_fijo} €/mes` : '—', true)}
+            ${row('Nuevo importe est.', precio_nuevo !== '—' ? `${Number(precio_nuevo).toFixed(2)} €/mes` : '—', false)}
+            ${row('Ahorro estimado',    `<strong style="color:#16a34a">${ahorro_anual}€/año (${pct_ahorro}%)</strong>`, true)}
+          </table>
+
+          <div style="padding:14px 16px;background:#fefce8;border-left:4px solid #eab308;margin-top:0;font-size:13px;color:#713f12">
+            📎 Adjuntos: DNI frontal · DNI trasero${facturaBuffer ? ' · <strong>Factura original</strong>' : ' · ⚠️ Factura NO disponible (revisar Storage)'}
+          </div>
+
+          <div style="padding:12px 16px;font-size:11px;color:#9ca3af;border-top:1px solid #e5e7eb;margin-top:8px">
+            Gestionado automáticamente por <strong>Lumux AI</strong> · lumux.es · Ref. ${short_id || '—'}
+          </div>
+        </div>
       `,
       attachments: attachments.map(a => ({ filename: a.filename, content: a.content })),
     }, {
       headers: {
         'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       }
     });
 
-    console.log(`[Contrato] Email enviado → ${emailDestino} | short_id=${short_id}`);
+    console.log(`[Contrato] ✅ Email enviado → ${emailDestino} | short_id=${short_id} | factura=${facturaBuffer ? 'adjunta' : 'NO adjunta'}`);
 
-    // ─── 4. WhatsApp de confirmación al cliente ────────────────────────────
+    // ─── 6. WhatsApp de confirmación al cliente ───────────────────────────
     if (informeData?.telefono) {
       try {
         await enviarMensajeWhatsApp(
           informeData.telefono,
-          `✅ ¡Todo listo! Hemos enviado tu solicitud de cambio a ${nueva_compania}.\n\nRecibirás el contrato para firmar en menos de 24h en ${email}.\n\n¿Tienes alguna duda? Escríbenos aquí mismo 💬`
+          `✅ ¡Todo listo, ${nombre ? nombre.split(' ')[0] : ''}! Hemos enviado tu solicitud de cambio a ${nueva_compania}.\n\nRecibirás el contrato para firmar en menos de 24h en ${email}.\n\n¿Tienes alguna duda? Escríbenos aquí mismo 💬`
         );
       } catch(e) { console.error('[Contrato] WA confirm error:', e.message); }
     }
