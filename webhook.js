@@ -163,44 +163,29 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
   }
 
   const esGas = datosFactura.tipo_suministro === 'gas';
+  const cups  = datosFactura.cups || null;
 
-  // ─── CUPS: guardar propiedad y bloquear si ya contratado ──────────────────
-  const cups = datosFactura.cups || null;
-  let propiedadId = null;
-
+  // ─── BLOQUEO POR CUPS ────────────────────────────────────────────────────
   if (!cups) {
-    // Sin CUPS no podemos continuar correctamente — respuesta manual
-    console.warn(`[CUPS] Factura sin CUPS detectado. Usuario: ${usuario.id}`);
+    // Sin CUPS la factura no se puede procesar ni asociar a un suministro
+    console.warn(`[CUPS] Factura sin CUPS. Usuario: ${usuario.id}`);
     return {
       respuesta: `⚙️ Estamos actualizando nuestra herramienta de análisis.\n\nEn breve uno de nuestros asesores revisará tu factura y te enviará tu comparativa personalizada.\n\n¿Tienes alguna duda? Llámanos directamente por este WhatsApp 📞`,
       metadata: { sin_cups: true }
     };
   }
 
-  // Guardar/verificar propiedad + comprobar contrato activo
-  const { propiedad, contratoActivo, ofertaFirmada } = await db.guardarOActualizarPropiedad(usuario.id, cups);
-  if (propiedad) propiedadId = propiedad.id;
-
-  if (contratoActivo) {
-    console.log(`[CUPS] Contrato activo ya existe para CUPS ${cups} → bloqueando`);
-    return {
-      respuesta: `✅ Este suministro (CUPS: ${cups}) ya tiene un contrato activo con *${contratoActivo.compania}* gestionado por Lumux.\n\nSi tienes dudas o quieres hacer algún cambio, llámanos directamente por este WhatsApp 📞`,
-      metadata: { cups, contrato_activo: contratoActivo.id }
-    };
+  // Verificar si este CUPS ya tiene contrato activo u oferta firmada
+  const bloqueo = await db.verificarBloqueCUPS(cups, usuario.id);
+  if (bloqueo.bloqueado) {
+    console.log(`[CUPS] Bloqueado: ${bloqueo.motivo} para CUPS ${cups}`);
+    return { respuesta: bloqueo.mensaje, metadata: { cups, bloqueado: true } };
   }
 
-  if (ofertaFirmada) {
-    console.log(`[CUPS] Oferta firmada reciente para CUPS ${cups} → bloqueando`);
-    const compOferta = ofertaFirmada.tarifas?.compania || 'la nueva compañía';
-    return {
-      respuesta: `✅ Ya tienes un cambio en tramitación para este suministro (CUPS: ${cups}) hacia *${compOferta}*.\n\nEn menos de 24h recibirás el contrato en tu email. ¿Tienes alguna duda? Escríbenos aquí 💬`,
-      metadata: { cups, oferta_firmada: ofertaFirmada.id }
-    };
-  }
+  // Guardar/actualizar propiedad con el CUPS
+  const propiedadId = await db.upsertPropiedad(usuario.id, cups);
 
-  console.log(`[CUPS] ${cups} → OK, sin contratos activos. Propiedad: ${propiedadId}`);
-
-  // ─── Guardar factura enlazada a la propiedad ──────────────────────────────
+  // ─── GUARDAR FACTURA ─────────────────────────────────────────────────────
   const factura = await db.guardarFactura(usuario.id, {
     propiedad_id:     propiedadId,
     compania:         datosFactura.compania,
@@ -215,7 +200,6 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     raw_texto_ocr:    JSON.stringify(datosFactura)
   });
 
-  // Guard: si la factura no se guardó, no continuar
   if (!factura) {
     console.error('[procesarFactura] guardarFactura devolvió null');
     return { respuesta: '❌ Error guardando la factura. Inténtalo de nuevo.', metadata: {} };
@@ -236,7 +220,6 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     ? await generarComparativaGas(datosFactura, tarifas)
     : await generarComparativa(datosFactura, tarifas);
 
-  // Guardar siempre el resumen en historial (con o sin ahorro)
   if (!esGas) {
     const resumen = generarResumenHistorial(datosFactura, comparativa);
     await db.guardarMensaje(usuario.id, 'assistant', resumen, { tipo: 'resumen_analisis', factura_id: factura.id });
@@ -248,20 +231,12 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
   if (comparativa.ahorro > 0 && comparativa.tarifa) {
     const d = comparativa.datosComparativa;
 
-    // 1. Guardar informe con short_id
-    // Guardar URL de factura en Storage si existe
-    let facturaStorageUrl2 = null;
-    try {
-      if (typeof facturaStorageUrl !== 'undefined' && facturaStorageUrl) {
-        facturaStorageUrl2 = facturaStorageUrl;
-      }
-    } catch(e) {}
-
     const informeGuardado = await db.guardarInforme({
       usuario_id:        usuario.id,
       factura_id:        factura.id,
       nombre:            usuario.nombre,
       telefono:          telefono,
+      cups:              cups,
       compania_actual:   datosFactura.compania,
       consumo_kwh:       datosFactura.consumo_kwh,
       consumo_p1_kwh:    datosFactura.consumo_p1_kwh,
@@ -283,35 +258,23 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
       precio_fijo_mes:   comparativa.tarifa.precio_fijo_mes,
     });
 
-    // Guard: si el informe no se guardó, loguear y continuar sin plantilla
     if (!informeGuardado) {
-      console.error('[procesarFactura] guardarInforme devolvió null — revisar columnas de la tabla informes');
-      respuesta = comparativa.mensaje;
-      return { respuesta, metadata: { factura_id: factura.id } };
+      console.error('[procesarFactura] guardarInforme devolvió null — ¿falta columna cups en la tabla informes?');
+      return { respuesta: comparativa.mensaje, metadata: { factura_id: factura.id } };
     }
 
-    // 2. URL corta
     const urlCorta = `${process.env.WEB_URL || 'https://lumux.es'}/informe.html?id=${informeGuardado.short_id}`;
-
-    // 3. Crear oferta
     const oferta = await db.crearOferta(usuario.id, factura.id, comparativa.tarifa.id, comparativa.ahorro, urlCorta);
     await db.supabase.from('informes').update({ oferta_id: oferta.id }).eq('id', informeGuardado.id);
     await db.programarRemarketing(usuario.id, oferta.id, 3, 'seguimiento_oferta');
 
-    // 4. Enviar plantilla con botón
     try {
       await enviarPlantillaInforme(
-        telefono,
-        usuario.nombre,
-        datosFactura.compania,
-        comparativa.tarifa.compania,
-        comparativa.ahorro,
-        d.pct_ahorro,
-        informeGuardado.short_id
+        telefono, usuario.nombre, datosFactura.compania,
+        comparativa.tarifa.compania, comparativa.ahorro, d.pct_ahorro, informeGuardado.short_id
       );
-      respuesta = null; // plantilla enviada, no enviar texto adicional
+      respuesta = null;
     } catch (e) {
-      // Fallback: si falla la plantilla, enviar texto con URL corta
       console.error('[procesarFactura] Fallback a texto:', e.message);
       respuesta += `\n${urlCorta}`;
     }
@@ -487,114 +450,176 @@ router.post('/contrato', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Faltan datos obligatorios' });
     }
 
-    // ─── 1. Obtener informe + factura de Supabase ──────────────────────────
+    // ─── 1. Obtener informe completo + factura + propiedad ────────────────
     let informeData = null;
+    let facturaData = null;
+    let propiedadData = null;
     let facturaBuffer = null;
+    let facturaFileName = 'factura_cliente.pdf';
 
     if (short_id) {
-      const { data } = await db.supabase
+      const { data: informe } = await db.supabase
         .from('informes')
-        .select('*, facturas(archivo_url, compania, consumo_kwh, potencia_kw, cups)')
+        .select(`*, facturas(id, archivo_url, compania, consumo_kwh, potencia_kw, precio_total, dias_facturacion, fecha_factura), ofertas(id, estado)`)
         .eq('short_id', short_id)
         .single();
-      informeData = data;
 
-      // Descargar factura para adjuntar al email
-      const facturaUrl = data?.facturas?.archivo_url;
+      informeData = informe;
+      facturaData = informe?.facturas;
+
+      // CUPS y dirección desde propiedades
+      if (informe?.usuario_id) {
+        const { data: prop } = await db.supabase
+          .from('propiedades')
+          .select('cups, direccion, codigo_postal, ciudad, provincia')
+          .eq('usuario_id', informe.usuario_id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        propiedadData = prop;
+      }
+
+      // Descargar factura original para adjuntar
+      const facturaUrl = facturaData?.archivo_url;
       if (facturaUrl) {
         try {
+          const ext = facturaUrl.match(/\.(pdf|jpg|jpeg|png)(\?|$)/i)?.[1] || 'pdf';
+          facturaFileName = `factura_${(nombre || 'cliente').replace(/\s+/g, '_')}.${ext}`;
           const r = await axios.get(facturaUrl, { responseType: 'arraybuffer' });
           facturaBuffer = Buffer.from(r.data);
-        } catch(e) { console.error('[Contrato] No se pudo descargar factura:', e.message); }
+          console.log(`[Contrato] Factura descargada: ${facturaBuffer.length} bytes`);
+        } catch(e) {
+          console.error('[Contrato] No se pudo descargar factura:', e.message);
+        }
+      } else {
+        console.warn('[Contrato] ⚠️ facturas.archivo_url vacío — factura NO adjunta');
       }
     }
 
-    // ─── 2. Guardar titular en Supabase ────────────────────────────────────
+    // ─── 2. Guardar titular + marcar oferta firmada + nota historial ──────
     if (informeData?.usuario_id) {
       await db.supabase.from('titulares').upsert({
         usuario_id:      informeData.usuario_id,
+        nombre:          nombre || informeData.nombre,
         email,
         cuenta_bancaria: iban.replace(/\s/g, '').toUpperCase(),
         updated_at:      new Date().toISOString(),
       }, { onConflict: 'usuario_id' });
 
-      if (informeData.oferta_id) {
+      const ofertaId = informeData.oferta_id || informeData.ofertas?.id;
+      if (ofertaId) {
         await db.supabase.from('ofertas')
           .update({ estado: 'firmada', fecha_firmado: new Date().toISOString() })
-          .eq('id', informeData.oferta_id);
+          .eq('id', ofertaId);
       }
 
-      // Estado del usuario y nota en historial para que el bot sepa del contrato
       await db.actualizarEstado(informeData.usuario_id, 'contratado');
-      const cupsContrato = propiedadData?.cups || informeData?.cups || null;
+
+      // Nota en historial → bot sabrá del contrato en futuras conversaciones
+      const cupsNota = propiedadData?.cups || informeData?.cups || 'no disponible';
       await db.guardarMensaje(
-        informeData.usuario_id,
-        'assistant',
-        `[CONTRATO] Cliente ha firmado contratación con ${nueva_compania} (tarifa: ${nueva_tarifa || '—'}). CUPS: ${cupsContrato || 'no disponible'}. Ahorro estimado: ${ahorro_anual}€/año. Email del cliente: ${email}. Estado: tramitando con la distribuidora. Ref. Lumux: ${short_id}.`,
-        { tipo: 'contrato_firmado', short_id, oferta_id: informeData.oferta_id }
+        informeData.usuario_id, 'assistant',
+        `[CONTRATO] Contratación firmada con ${nueva_compania} (tarifa: ${nueva_tarifa || '—'}). CUPS: ${cupsNota}. Ahorro: ${ahorro_anual}€/año. Email: ${email}. Estado: tramitando. Ref: ${short_id}.`,
+        { tipo: 'contrato_firmado', short_id, oferta_id: ofertaId }
       );
     }
 
-    // ─── 3. Enviar email via Resend API ─────────────────────────────────────
-    const cups     = informeData?.cups || informeData?.facturas?.cups || 'No disponible';
-    const consumo  = informeData?.consumo_kwh || informeData?.facturas?.consumo_kwh || '—';
-    const potencia = informeData?.potencia_kw  || informeData?.facturas?.potencia_kw  || '—';
-    const compania_actual = informeData?.compania_actual || informeData?.facturas?.compania || '—';
+    // ─── 3. Preparar datos del email ──────────────────────────────────────
+    const cups           = propiedadData?.cups || informeData?.cups || 'No disponible';
+    const direccion      = [propiedadData?.direccion, propiedadData?.codigo_postal, propiedadData?.ciudad, propiedadData?.provincia].filter(Boolean).join(', ') || '—';
+    const compania_actual = informeData?.compania_actual || facturaData?.compania || '—';
+    const consumo_total   = informeData?.consumo_kwh ?? facturaData?.consumo_kwh ?? '—';
+    const consumo_p1      = informeData?.consumo_p1_kwh ?? '—';
+    const consumo_p2      = informeData?.consumo_p2_kwh ?? '—';
+    const consumo_p3      = informeData?.consumo_p3_kwh ?? '—';
+    const potencia        = informeData?.potencia_kw ?? facturaData?.potencia_kw ?? '—';
+    const dias            = informeData?.dias_facturacion ?? facturaData?.dias_facturacion ?? '—';
+    const precio_actual   = informeData?.precio_actual_mes ?? facturaData?.precio_total ?? '—';
+    const precio_nuevo    = informeData?.precio_nuevo_mes ?? '—';
+    const pct_ahorro      = informeData?.pct_ahorro ?? '—';
+    const p_kwh_p1        = informeData?.precio_kwh_p1 ?? '—';
+    const p_kwh_p2        = informeData?.precio_kwh_p2 ?? '—';
+    const p_kwh_p3        = informeData?.precio_kwh_p3 ?? '—';
+    const p_pot_p1        = informeData?.precio_pot_p1 ?? '—';
+    const p_pot_p2        = informeData?.precio_pot_p2 ?? '—';
+    const p_fijo          = informeData?.precio_fijo_mes ?? '—';
+    const fecha_factura   = facturaData?.fecha_factura ? new Date(facturaData.fecha_factura).toLocaleDateString('es-ES') : '—';
 
+    // ─── 4. Adjuntos: DNI x2 + FACTURA ORIGINAL ──────────────────────────
     const attachments = [
       { filename: dni_frontal_nombre || 'dni_frontal.jpg', content: dni_frontal_base64 },
       { filename: dni_trasero_nombre || 'dni_trasero.jpg', content: dni_trasero_base64 },
     ];
     if (facturaBuffer) {
-      attachments.push({ filename: 'factura_cliente.pdf', content: facturaBuffer.toString('base64') });
+      attachments.push({ filename: facturaFileName, content: facturaBuffer.toString('base64') });
     }
 
+    // ─── 5. Enviar email ──────────────────────────────────────────────────
     const emailDestino = getEmailProveedor(nueva_compania);
+    const r = (label, value, bg) =>
+      `<tr style="${bg ? 'background:#f8fafc;' : ''}"><td style="padding:9px 12px;font-weight:600;color:#374151;width:210px;border-bottom:1px solid #e5e7eb">${label}</td><td style="padding:9px 12px;color:#111827;border-bottom:1px solid #e5e7eb">${value}</td></tr>`;
 
     await axios.post('https://api.resend.com/emails', {
-      from:    'Lumux AI <ceo@lumux.es>',
-      to:      [emailDestino],
-      cc:      process.env.SMTP_USER ? [process.env.SMTP_USER] : [],
-      subject: `TRAMITAR SIGUIENTE CONTRATO ALBERTO FDEZ LUMUX: ${nueva_compania} · ${nombre || 'Cliente'} · CUPS: ${cups}`,
-      html: `
-        <h2 style="font-family:sans-serif;color:#1e1b2a">Nueva solicitud de contratación · Lumux AI</h2>
-        <table style="border-collapse:collapse;width:100%;font-family:sans-serif;font-size:14px;max-width:600px">
-          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold;width:200px">Nombre titular</td><td style="padding:10px">${nombre || '—'}</td></tr>
-          <tr><td style="padding:10px;font-weight:bold">Email cliente</td><td style="padding:10px">${email}</td></tr>
-          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold">IBAN</td><td style="padding:10px;font-family:monospace">${iban}</td></tr>
-          <tr><td style="padding:10px;font-weight:bold">CUPS</td><td style="padding:10px;font-family:monospace">${cups}</td></tr>
-          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold">Compañía actual</td><td style="padding:10px">${compania_actual}</td></tr>
-          <tr><td style="padding:10px;font-weight:bold">Consumo factura</td><td style="padding:10px">${consumo} kWh</td></tr>
-          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold">Potencia</td><td style="padding:10px">${potencia} kW</td></tr>
-          <tr><td style="padding:10px;font-weight:bold">Compañía destino</td><td style="padding:10px"><strong style="color:#16a34a">${nueva_compania}</strong></td></tr>
-          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold">Tarifa</td><td style="padding:10px">${nueva_tarifa || '—'}</td></tr>
-          <tr><td style="padding:10px;font-weight:bold">Ahorro estimado</td><td style="padding:10px;color:#16a34a;font-weight:bold">${ahorro_anual}€/año</td></tr>
-          <tr style="background:#f8fafc"><td style="padding:10px;font-weight:bold">Ref. Lumux</td><td style="padding:10px;font-family:monospace">${short_id || '—'}</td></tr>
-          <tr><td style="padding:10px;font-weight:bold">Fecha solicitud</td><td style="padding:10px">${new Date().toLocaleString('es-ES')}</td></tr>
+      from: 'Lumux AI <ceo@lumux.es>',
+      to:   [emailDestino],
+      cc:   process.env.SMTP_USER ? [process.env.SMTP_USER] : [],
+      subject: `CONTRATO LUMUX · ${nueva_compania} · ${nombre || 'Cliente'} · CUPS: ${cups}`,
+      html: `<div style="font-family:sans-serif;max-width:640px;margin:0 auto">
+        <div style="background:#1e1b2a;padding:20px 24px;border-radius:8px 8px 0 0">
+          <h2 style="margin:0;color:#fff;font-size:18px">⚡ Nueva solicitud de contratación · Lumux AI</h2>
+          <p style="margin:4px 0 0;color:#a78bfa;font-size:13px">Ref. ${short_id || '—'} · ${new Date().toLocaleString('es-ES')}</p>
+        </div>
+        <table style="border-collapse:collapse;width:100%;font-size:14px">
+          <tr><td colspan="2" style="padding:10px 12px;background:#f0fdf4;font-weight:700;color:#15803d;font-size:12px;letter-spacing:.05em">DATOS DEL TITULAR</td></tr>
+          ${r('Nombre titular', nombre || '—')}
+          ${r('Email', email, true)}
+          ${r('IBAN', `<span style="font-family:monospace">${iban}</span>`)}
+          ${r('Dirección', direccion, true)}
+          ${r('CUPS', `<span style="font-family:monospace">${cups}</span>`)}
+          <tr><td colspan="2" style="padding:10px 12px;background:#eff6ff;font-weight:700;color:#1d4ed8;font-size:12px;letter-spacing:.05em">DATOS DE LA FACTURA ACTUAL</td></tr>
+          ${r('Compañía actual', compania_actual)}
+          ${r('Fecha factura', fecha_factura, true)}
+          ${r('Consumo total', consumo_total !== '—' ? `${consumo_total} kWh` : '—')}
+          ${r('Consumo P1 / P2 / P3', [consumo_p1,consumo_p2,consumo_p3].map(v => v !== '—' ? `${v} kWh` : '—').join(' · '), true)}
+          ${r('Potencia contratada', potencia !== '—' ? `${potencia} kW` : '—')}
+          ${r('Días facturación', `${dias} días`, true)}
+          ${r('Importe factura', precio_actual !== '—' ? `${Number(precio_actual).toFixed(2)} €/mes` : '—')}
+          <tr><td colspan="2" style="padding:10px 12px;background:#f0fdf4;font-weight:700;color:#15803d;font-size:12px;letter-spacing:.05em">NUEVA TARIFA LUMUX</td></tr>
+          ${r('Compañía destino', `<strong style="color:#16a34a">${nueva_compania}</strong>`)}
+          ${r('Tarifa', nueva_tarifa || '—', true)}
+          ${r('Precio kWh P1/P2/P3', [p_kwh_p1,p_kwh_p2,p_kwh_p3].map(v => v !== '—' ? `${v}€` : '—').join(' · '))}
+          ${r('Potencia P1/P2', [p_pot_p1,p_pot_p2].map(v => v !== '—' ? `${v}€/kW·día` : '—').join(' · '), true)}
+          ${r('Cuota fija', p_fijo !== '—' ? `${p_fijo} €/mes` : '—')}
+          ${r('Nuevo importe est.', precio_nuevo !== '—' ? `${Number(precio_nuevo).toFixed(2)} €/mes` : '—', true)}
+          ${r('Ahorro estimado', `<strong style="color:#16a34a">${ahorro_anual}€/año (${pct_ahorro}%)</strong>`)}
         </table>
-        <p style="margin-top:16px;font-size:12px;color:#64748b;font-family:sans-serif">
-          Adjuntos: DNI cara delantera · DNI cara trasera · Factura original<br>
-          Gestionado automáticamente por <strong>Lumux AI</strong> · lumux.es
-        </p>
-      `,
+        <div style="padding:12px 16px;background:#fefce8;border-left:4px solid #eab308;font-size:13px;color:#713f12">
+          📎 Adjuntos: DNI frontal · DNI trasero${facturaBuffer ? ` · <strong>${facturaFileName}</strong>` : ' · ⚠️ Factura no disponible'}
+        </div>
+        <div style="padding:10px 16px;font-size:11px;color:#9ca3af;border-top:1px solid #e5e7eb">
+          Gestionado por <strong>Lumux AI</strong> · lumux.es · Ref. ${short_id || '—'}
+        </div>
+      </div>`,
       attachments: attachments.map(a => ({ filename: a.filename, content: a.content })),
     }, {
-      headers: {
-        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
+      headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' }
     });
 
-    console.log(`[Contrato] Email enviado → ${emailDestino} | short_id=${short_id}`);
+    console.log(`[Contrato] ✅ Email → ${emailDestino} | factura=${facturaBuffer ? 'adjunta' : 'NO'} | short_id=${short_id}`);
 
-    // ─── 4. WhatsApp de confirmación al cliente ────────────────────────────
-    if (informeData?.telefono) {
+    // ─── 6. WhatsApp confirmación al cliente ──────────────────────────────
+    const telefonoCliente = informeData?.telefono;
+    if (telefonoCliente) {
       try {
+        const nombreCorto = (nombre || '').split(' ')[0] || '';
         await enviarMensajeWhatsApp(
-          informeData.telefono,
-          `✅ ¡Todo listo! Hemos enviado tu solicitud de cambio a ${nueva_compania}.\n\nRecibirás el contrato para firmar en menos de 24h en ${email}.\n\n¿Tienes alguna duda? Escríbenos aquí mismo 💬`
+          telefonoCliente,
+          `✅ ¡Todo listo${nombreCorto ? ', ' + nombreCorto : ''}! Hemos enviado tu solicitud de cambio a ${nueva_compania}.\n\nRecibirás el contrato para firmar en menos de 24h en ${email}.\n\n¿Tienes alguna duda? Escríbenos aquí mismo 💬`
         );
+        console.log(`[Contrato] WA confirmación enviado → ${telefonoCliente}`);
       } catch(e) { console.error('[Contrato] WA confirm error:', e.message); }
+    } else {
+      console.warn('[Contrato] ⚠️ Sin teléfono en informeData — WA confirmación no enviado');
     }
 
     res.json({ ok: true });
