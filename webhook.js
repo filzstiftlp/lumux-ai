@@ -262,7 +262,6 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
       factura_id:        factura.id,
       nombre:            usuario.nombre,
       telefono:          telefono,
-      cups:              cups,
       compania_actual:   datosFactura.compania,
       consumo_kwh:       datosFactura.consumo_kwh,
       consumo_p1_kwh:    datosFactura.consumo_p1_kwh,
@@ -283,6 +282,13 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
       precio_pot_p2:     comparativa.tarifa.precio_kw_p2,
       precio_fijo_mes:   comparativa.tarifa.precio_fijo_mes,
     });
+
+    // Guard: si el informe no se guardó, loguear y continuar sin plantilla
+    if (!informeGuardado) {
+      console.error('[procesarFactura] guardarInforme devolvió null — revisar columnas de la tabla informes');
+      respuesta = comparativa.mensaje;
+      return { respuesta, metadata: { factura_id: factura.id } };
+    }
 
     // 2. URL corta
     const urlCorta = `${process.env.WEB_URL || 'https://lumux.es'}/informe.html?id=${informeGuardado.short_id}`;
