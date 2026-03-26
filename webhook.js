@@ -156,7 +156,7 @@ async function enviarPlantillaInforme(telefono, nombre, companiaActual, nuevaCom
 }
 
 // ─── PROCESAR FACTURA ─────────────────────────────────────────────────────────
-async function procesarFactura(base64, mediaType, usuario, telefono) {
+async function procesarFactura(base64, mediaType, usuario, telefono, facturaStorageUrl = null) {
   const datosFactura = await analizarFactura(base64, mediaType);
   if (!datosFactura) {
     return { respuesta: '❌ No he podido leer la factura. ¿Puedes enviarla más clara o en PDF?', metadata: {} };
@@ -173,6 +173,7 @@ async function procesarFactura(base64, mediaType, usuario, telefono) {
     precio_total:     datosFactura.precio_total,
     dias_facturacion: datosFactura.dias_facturacion,
     fecha_factura:    datosFactura.fecha_factura,
+    archivo_url:      facturaStorageUrl,
     raw_texto_ocr:    JSON.stringify(datosFactura)
   });
 
@@ -369,7 +370,24 @@ router.post('/whatsapp', async (req, res) => {
       const imageResponse = await axios.get(archivoUrl, { responseType: 'arraybuffer', headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } });
       const fileBuffer = Buffer.from(imageResponse.data);
       if (chatwootConvId) await enviarArchivoChatwoot(chatwootConvId, fileBuffer, fileName, mediaType);
-      const resultado = await procesarFactura(fileBuffer.toString('base64'), mediaType, usuario, from);
+
+      // ─── Subir factura a Supabase Storage ────────────────────────────────
+      let facturaStorageUrl = null;
+      try {
+        const storageFileName = `facturas/${usuario.id}_${Date.now()}_${fileName}`;
+        const { error: storageError } = await db.supabase.storage
+          .from('facturas')
+          .upload(storageFileName, fileBuffer, { contentType: mediaType, upsert: false });
+        if (!storageError) {
+          const { data: urlData } = db.supabase.storage.from('facturas').getPublicUrl(storageFileName);
+          facturaStorageUrl = urlData?.publicUrl || null;
+          console.log('[Storage] Factura guardada:', facturaStorageUrl);
+        } else {
+          console.error('[Storage] Error subiendo factura:', storageError.message);
+        }
+      } catch(se) { console.error('[Storage] Exception:', se.message); }
+
+      const resultado = await procesarFactura(fileBuffer.toString('base64'), mediaType, usuario, from, facturaStorageUrl);
       respuesta = resultado.respuesta;
       metadata = resultado.metadata;
     } else {
