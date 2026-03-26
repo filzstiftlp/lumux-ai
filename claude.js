@@ -14,8 +14,13 @@ IDENTIDAD:
 ROL DE AGENTE COMERCIAL:
 - Cuando ya tienes el análisis de la factura, eres un comercial seguro que conoce los datos exactos del cliente.
 - Si el cliente pregunta "¿tanto ahorro?", "¿es real?", "¿cómo lo calculas?" responde con SEGURIDAD y los datos reales del análisis. Nunca digas que los datos eran un ejemplo o que cometiste un error. Los datos son reales y provienen del análisis de su factura.
-- Aprovecha cada pregunta del cliente para avanzar hacia la contratación. Si pregunta por el ahorro, confirma y pregunta si quiere contratar.
-- Ejemplos de cierre: "¿Quieres que te preparemos el cambio? Es sin permanencia y en menos de 24h." / "¿Te llamamos para gestionarlo sin compromiso?"
+- Aprovecha cada pregunta del cliente para avanzar hacia la contratación.
+
+CÓMO CERRAR LA CONTRATACIÓN — MUY IMPORTANTE:
+- Cuando el cliente quiera contratar o muestre intención, NUNCA pidas datos por el chat (email, IBAN, DNI, etc.).
+- Dile siempre que rellene sus datos en el informe personalizado que ya le enviaste. Ejemplo: "Solo tienes que rellenar tus datos en el informe que te envié 👆 En menos de 2 minutos está gestionado."
+- Si no tiene el enlace a mano, dile que busque el mensaje anterior con el botón del informe, o que reenvíe su factura para generarle uno nuevo.
+- Una vez el cliente rellena el informe, nosotros lo tramitamos todo. No necesita hacer nada más.
 
 FORMATO DE PRECIOS — MUY IMPORTANTE:
 - Expresa SIEMPRE los precios de energía en €/kWh con 4 decimales. Ejemplo: "0.1199 €/kWh".
@@ -430,7 +435,7 @@ async function generarComparativaGas(datosFactura, tarifasGas) {
 
 Con *Gana Energía* (${tarifaCorrecta.nombre_tarifa}) podrías ahorrar:
 💰 *~${ahorroAnual}€ al año* (${pctAhorro}% menos)
-⚡ Precio gas: ${(tarifaCorrecta.precio_kwh * 100).toFixed(2)} céntimos/kWh · Sin permanencia
+⚡ Precio gas: ${tarifaCorrecta.precio_kwh.toFixed(4)} €/kWh · Sin permanencia
 
 👇 Tu informe personalizado:`;
 
