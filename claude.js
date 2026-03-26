@@ -322,17 +322,18 @@ async function analizarFacturaGas(base64Data, mediaType) {
 Devuelve SOLO el JSON, sin texto adicional ni backticks:
 {
   "tipo_suministro": "gas",
-  "compania": "nombre de la compañía",
+  "compania": "nombre comercial de la compañía (ej: Gana Energía, Naturgy, Endesa, Iberdrola...)",
   "fecha_factura": "YYYY-MM-DD",
-  "dias_facturacion": número,
-  "consumo_kwh": número total de kWh,
-  "precio_kwh": precio medio €/kWh = importe_energia / consumo_kwh,
-  "precio_fijo_mes": € fijo mensual o null,
-  "precio_total": importe total con IVA,
-  "cups": "código CUPS o null",
-  "consumo_anual_estimado": kWh anuales estimados o null
+  "dias_facturacion": número de días del periodo facturado,
+  "consumo_kwh": número total de kWh consumidos,
+  "precio_kwh": precio del término variable €/kWh (SOLO el gas, sin servicios adicionales),
+  "precio_fijo_mes": término fijo €/mes (SOLO el término de acceso fijo, sin servicios adicionales),
+  "precio_total": ⚠️ USA SOLO: término_fijo + gas_consumido + impuesto_hidrocarburos + IVA. IGNORA completamente líneas de "Varios", "Canon IRC", "Servicio adicional", "Asistente", "Alquileres" y cualquier servicio extra. El precio_total debe reflejar solo el coste puro del gas,
+  "tarifa_acceso": "RL.1", "RL.2" o "RL.3" según aparezca en la factura,
+  "cups": "código CUPS completo o null",
+  "consumo_anual_estimado": kWh anuales estimados si aparece en la factura, o null
 }
-Si algún dato no aparece, pon null.`
+REGLA CRÍTICA precio_total: término_fijo + (consumo_kwh × precio_kwh) + impuesto_hidrocarburos + IVA 21%. NO incluir servicios de valor añadido.`
         }
       ]
     }]
@@ -352,36 +353,82 @@ function determinarSegmentoGas(consumoAnualKwh) {
   return 'RL.3';
 }
 
+// ─── COMPARATIVA GAS ─────────────────────────────────────────────────────────
+// REGLA: si el cliente YA es de Gana Energía → tarifa actualizada, no ofrecemos.
+// Si es de otra compañía → ofrecemos Gana Energía según segmento RL.
 async function generarComparativaGas(datosFactura, tarifasGas) {
-  const diasFactura = datosFactura.dias_facturacion || 30;
-  const factor = 30 / diasFactura;
+  const diasFactura  = datosFactura.dias_facturacion || 30;
+  const factor       = 30 / diasFactura;
+  const consumoKwh   = datosFactura.consumo_kwh || 0;
+  const consumoMes   = consumoKwh * factor;
+  const consumoAnual = datosFactura.consumo_anual_estimado || (consumoMes * 12);
 
-  const consumoMensual = datosFactura.consumo_kwh * factor;
-  const consumoAnualEstimado = datosFactura.consumo_anual_estimado || (consumoMensual * 12);
-  const segmento = determinarSegmentoGas(consumoAnualEstimado);
-
-  const precioTotalSinIVA = datosFactura.precio_total / 1.21;
-  const costeActualMes = precioTotalSinIVA * factor;
-
-  const tarifaCorrecta = tarifasGas.find(t => t.segmento === segmento);
-  if (!tarifaCorrecta) return { mensaje: 'No hemos encontrado una tarifa de gas adecuada.', ahorro: 0, tarifa: null };
-
-  const costeNuevo = (tarifaCorrecta.precio_kwh * consumoMensual) + (tarifaCorrecta.precio_fijo_mes || 0);
-  const ahorroMensual = costeActualMes - costeNuevo;
-
-  if (ahorroMensual <= 0) {
-    return { mensaje: '✅ Ya tienes una tarifa de gas muy competitiva.', ahorro: 0, tarifa: null };
+  // Si ya es cliente de Gana Energía → no hay nada mejor que ofrecerle
+  if ((datosFactura.compania || '').toLowerCase().includes('gana')) {
+    return {
+      mensaje: `✅ Ya tienes el gas con *Gana Energía*, una de las tarifas más competitivas del mercado.\n\nTe avisaremos si hay alguna bajada de precio que te beneficie. ¿Puedo ayudarte con algo más?`,
+      ahorro: 0, tarifa: null, datosComparativa: null
+    };
   }
 
-  const ahorroAnual = parseFloat((ahorroMensual * 12).toFixed(2));
-  const mensaje = `💡 Hemos analizado tu factura de gas de ${datosFactura.compania || 'tu compañía'}.
+  // Determinar segmento RL por consumo anual
+  const segmento = datosFactura.tarifa_acceso || determinarSegmentoGas(consumoAnual);
 
-Con Gana Energía (${tarifaCorrecta.nombre_tarifa}) podrías ahorrar:
-💰 ~${ahorroAnual}€ al año
+  // Buscar tarifa de Gana para ese segmento
+  const tarifaCorrecta = tarifasGas.find(t =>
+    (t.compania || '').toLowerCase().includes('gana') && t.segmento === segmento
+  ) || tarifasGas.find(t => t.segmento === segmento); // fallback
 
-¿Quieres ver la comparativa completa?`;
+  if (!tarifaCorrecta) {
+    return { mensaje: 'No hemos encontrado una tarifa de gas adecuada para tu perfil de consumo.', ahorro: 0, tarifa: null, datosComparativa: null };
+  }
 
-  return { mensaje, ahorro: ahorroAnual, tarifa: tarifaCorrecta };
+  // Coste actual normalizado a 30 días (precio puro gas, ya limpiado en OCR)
+  const costeActualMes = (datosFactura.precio_total / diasFactura) * 30;
+
+  // Coste con Gana Energía: término variable + término fijo mensual
+  const costeNuevoSinIVA = (tarifaCorrecta.precio_kwh * consumoMes) + (tarifaCorrecta.precio_fijo_mes || 0);
+  // Añadir IVA 21% + Impuesto Hidrocarburos (aprox 0.00234€/kWh normalizado)
+  const impuestoHidro = consumoMes * 0.00234;
+  const costeNuevo = (costeNuevoSinIVA + impuestoHidro) * 1.21;
+
+  const ahorroMes   = costeActualMes - costeNuevo;
+
+  if (ahorroMes <= 2) {
+    return {
+      mensaje: `✅ Ya tienes una tarifa de gas bastante competitiva con ${datosFactura.compania}.\n\nTe avisaremos si detectamos una tarifa más barata para tu perfil. ¿Puedo ayudarte con algo más?`,
+      ahorro: 0, tarifa: null, datosComparativa: null
+    };
+  }
+
+  const ahorroAnual    = parseFloat((ahorroMes * 12).toFixed(2));
+  const precioNuevoMes = parseFloat(costeNuevo.toFixed(2));
+  const pctAhorro      = Math.round((ahorroMes / costeActualMes) * 100);
+
+  const mensaje = `💡 ¡Buenas noticias! Hemos analizado tu factura de gas de *${datosFactura.compania || 'tu compañía'}*.
+
+Con *Gana Energía* (${tarifaCorrecta.nombre_tarifa}) podrías ahorrar:
+💰 *~${ahorroAnual}€ al año* (${pctAhorro}% menos)
+⚡ Precio gas: ${(tarifaCorrecta.precio_kwh * 100).toFixed(2)} céntimos/kWh · Sin permanencia
+
+👇 Tu informe personalizado:`;
+
+  return {
+    mensaje,
+    ahorro: ahorroAnual,
+    tarifa: tarifaCorrecta,
+    datosComparativa: {
+      precio_actual_mes:   parseFloat(costeActualMes.toFixed(2)),
+      precio_nuevo_mes:    precioNuevoMes,
+      precio_actual_anual: parseFloat((costeActualMes * 12).toFixed(2)),
+      precio_nuevo_anual:  parseFloat((precioNuevoMes * 12).toFixed(2)),
+      ahorro_anual:        ahorroAnual,
+      pct_ahorro:          pctAhorro,
+      consumo_total:       consumoKwh,
+      dias:                diasFactura,
+      segmento,
+    }
+  };
 }
 
 // ─── RESUMEN PARA HISTORIAL ───────────────────────────────────────────────────
