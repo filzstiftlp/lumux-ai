@@ -21,17 +21,6 @@ CUANDO EL CLIENTE ENVÍE UNA FACTURA:
 - Confirma brevemente que la recibes. Sin pedir confirmaciones innecesarias ni preguntar si la imagen se ve bien.
 - No preguntes sobre autoconsumo ni placas solares a menos que la factura lo indique.
 
-CUPS (Código Universal del Punto de Suministro):
-- Es el identificador único del suministro eléctrico o de gas. Empieza por ES y tiene 20-22 caracteres.
-- Si en el contexto de la conversación ya tienes el CUPS del cliente, úsalo siempre que sea relevante.
-- Si el cliente ya tiene un contrato activo gestionado por Lumux para ese CUPS, NO ofrezcas cambio de tarifa. Infórmale de que ya está gestionado y derívale a llamarnos.
-- Si el cliente ya tiene una contratación en trámite (oferta firmada), infórmale del estado y que en menos de 24h recibirá el contrato.
-
-DESPUÉS DE LA CONTRATACIÓN:
-- Si el cliente pregunta por el estado de su contrato, dile que el equipo ya lo está tramitando y que recibirá el contrato en su email en menos de 24h.
-- Si tiene dudas post-firma, derívale siempre a llamar al número de WhatsApp donde será atendido por un asesor.
-- Nunca prometas fechas exactas de activación, solo "en los próximos días hábiles".
-
 ATENCIÓN TELEFÓNICA:
 - Si el cliente quiere hablar con alguien, dile que puede llamar a este mismo número de WhatsApp.
 
@@ -51,14 +40,6 @@ async function responderMensaje(historial, mensajeUsuario) {
 
   if (resumenAnalisis) {
     systemPrompt += `\n\nCONTEXTO REAL DE ESTA CONVERSACIÓN (datos ya calculados de la factura real del cliente, úsalos con total seguridad):\n${resumenAnalisis.mensaje}`;
-  }
-
-  // Inyectar estado de contratación si existe en el historial
-  const mensajeContrato = [...historial]
-    .reverse()
-    .find(m => m.mensaje && m.mensaje.startsWith('[CONTRATO]'));
-  if (mensajeContrato) {
-    systemPrompt += `\n\nESTADO DE CONTRATACIÓN DEL CLIENTE:\n${mensajeContrato.mensaje}`;
   }
 
   // Filtrar los mensajes de resumen del historial para no duplicar ni confundir
@@ -157,34 +138,63 @@ REGLAS IMPORTANTES:
 }
 
 // ─── COMPARATIVA DE LUZ ───────────────────────────────────────────────────────
+// REGLA DE NEGOCIO:
+//   · Cliente con IBERDROLA → ofrecemos GANA ENERGÍA
+//   · Cualquier otro cliente  → ofrecemos IBERDROLA IMPULSA 24H
+// El precio mostrado al cliente incluye siempre el descuento promocional.
+function esIberdrola(compania) {
+  return (compania || '').toLowerCase().includes('iberdrola');
+}
+
 async function generarComparativa(datosFactura, tarifas) {
   const diasFactura = datosFactura.dias_facturacion || 30;
-  const factor = 30 / diasFactura;
+  const factor      = 30 / diasFactura;
 
-  const consumoTotal = datosFactura.consumo_kwh || 0;
-  const consumoP1    = datosFactura.consumo_p1_kwh || 0;
-  const consumoP2    = datosFactura.consumo_p2_kwh || 0;
-  const consumoP3    = datosFactura.consumo_p3_kwh || 0;
-  const potencia     = datosFactura.potencia_kw || 4.4;
+  const consumoTotal    = datosFactura.consumo_kwh || 0;
+  const consumoP1       = datosFactura.consumo_p1_kwh || 0;
+  const consumoP2       = datosFactura.consumo_p2_kwh || 0;
+  const consumoP3       = datosFactura.consumo_p3_kwh || 0;
+  const potencia        = datosFactura.potencia_kw || 4.4;
   const tieneTriperiodo = consumoP1 > 0 || consumoP2 > 0 || consumoP3 > 0;
 
   // Precio actual normalizado a 30 días (con todos los impuestos incluidos)
   const costeActualMes = (datosFactura.precio_total / (datosFactura.dias_facturacion || 30)) * 30;
 
-  let mejorTarifa = null;
-  let mejorAhorro = 0;
-  let mejorCoste = 0;
+  // ── Selección de tarifa según compañía actual del cliente ──────────────────
+  const clienteEsIberdrola = esIberdrola(datosFactura.compania);
 
+  // Filtrar tarifas: si el cliente es de Iberdrola usamos Gana Energía, si no Iberdrola.
+  // Además, nunca ofrecer la misma compañía que ya tiene el cliente.
   const tarifasFiltradas = tarifas.filter(t => {
     const minKw = t.potencia_min_kw || 0;
     const maxKw = t.potencia_max_kw || 15;
-    return potencia >= minKw && potencia <= maxKw;
+    if (potencia < minKw || potencia > maxKw) return false;
+    if (clienteEsIberdrola) {
+      return (t.compania || '').toLowerCase().includes('gana');
+    } else {
+      return (t.compania || '').toLowerCase().includes('iberdrola');
+    }
   });
 
-  for (const tarifa of tarifasFiltradas) {
+  // Fallback: si no hay tarifas de la empresa objetivo, usar cualquier activa
+  const tarifasAUsar = tarifasFiltradas.length > 0
+    ? tarifasFiltradas
+    : tarifas.filter(t => {
+        const minKw = t.potencia_min_kw || 0;
+        const maxKw = t.potencia_max_kw || 15;
+        return potencia >= minKw && potencia <= maxKw &&
+               !(t.compania || '').toLowerCase().includes((datosFactura.compania || '').toLowerCase().split(' ')[0]);
+      });
+
+  let mejorTarifa = null;
+  let mejorAhorro = 0;
+  let mejorCoste  = 0;
+
+  for (const tarifa of tarifasAUsar) {
     let costeEnergia = 0;
 
-    if (tieneTriperiodo && tarifa.precio_kwh_p1) {
+    // Para tarifas 24h (planas) usamos precio_kwh_p1 como precio único
+    if (tieneTriperiodo && tarifa.precio_kwh_p2) {
       const p1Mes = consumoP1 * factor;
       const p2Mes = consumoP2 * factor;
       const p3Mes = consumoP3 * factor;
@@ -197,76 +207,68 @@ async function generarComparativa(datosFactura, tarifas) {
       costeEnergia = consumoMes * (tarifa.precio_kwh_p1 || tarifa.precio_kwh || 0);
     }
 
-    const costePotencia = (tarifa.precio_kw_p1 || tarifa.precio_kw || 0) * potencia * 30;
+    // Potencia: precio_kw_p1 + precio_kw_p2 (ambos × kW × días)
+    const costePotencia =
+      (tarifa.precio_kw_p1 || tarifa.precio_kw || 0) * potencia * 30 +
+      (tarifa.precio_kw_p2 || 0) * potencia * 30;
     const costeFijo = tarifa.precio_fijo_mes || 0;
 
     let descuentoBV = 0;
     if ((datosFactura.tiene_autoconsumo || datosFactura.tiene_bateria_virtual) &&
         datosFactura.excedentes_kwh > 0 && tarifa.bateria_virtual) {
-      const excedentesMes = datosFactura.excedentes_kwh * factor;
-      descuentoBV = excedentesMes * (tarifa.compensacion_excedentes || 0.06);
+      descuentoBV = (datosFactura.excedentes_kwh * factor) * (tarifa.compensacion_excedentes || 0.06);
     }
 
-    // Añadir impuestos al coste nuevo (Impuesto Eléctrico 5.11% + IVA 21%)
-    const costeTarifaSinImp = costeEnergia + costePotencia + costeFijo - descuentoBV;
-    const costeTarifa = costeTarifaSinImp * 1.2611;
+    // Impuestos: Impuesto Eléctrico 5.11% + IVA 21% = factor 1.2611
+    const costeTarifa = (costeEnergia + costePotencia + costeFijo - descuentoBV) * 1.2611;
     const ahorro = costeActualMes - costeTarifa;
 
-    if (ahorro > 3 && mejorTarifa === null) {
+    if (ahorro > 3 && (mejorTarifa === null || ahorro > mejorAhorro)) {
       mejorTarifa = tarifa;
       mejorAhorro = ahorro;
-      mejorCoste = costeTarifa;
-    }
-
-    if (ahorro > mejorAhorro && mejorTarifa === null) {
-      mejorAhorro = ahorro;
-      mejorCoste = costeTarifa;
-      mejorTarifa = tarifa;
+      mejorCoste  = costeTarifa;
     }
   }
 
   if (!mejorTarifa || mejorAhorro <= 0) {
     return {
-      mensaje: '✅ Ya tienes una tarifa muy competitiva. ¡Estás pagando un precio justo!',
-      ahorro: 0,
-      tarifa: null,
-      datosComparativa: null
+      mensaje: '✅ Ya tienes una tarifa muy competitiva. ¡Estás pagando un precio justo! Te avisaremos si detectamos una bajada de precios que te beneficie.',
+      ahorro: 0, tarifa: null, datosComparativa: null
     };
   }
 
-  const ahorroAnual = parseFloat((mejorAhorro * 12).toFixed(2));
-  const precioNuevoMes = parseFloat(mejorCoste.toFixed(2));
-  const precioActualAnual = parseFloat((costeActualMes * 12).toFixed(2));
-  const pctAhorro = Math.round((mejorAhorro / costeActualMes) * 100);
+  const ahorroAnual     = parseFloat((mejorAhorro * 12).toFixed(2));
+  const precioNuevoMes  = parseFloat(mejorCoste.toFixed(2));
+  const precioActualMes = parseFloat(costeActualMes.toFixed(2));
+  const pctAhorro       = Math.round((mejorAhorro / costeActualMes) * 100);
+
+  // Precio de energía con descuento visible (atractivo para el cliente)
+  const precioKwhVisible = mejorTarifa.precio_kwh_p1
+    ? `${(mejorTarifa.precio_kwh_p1 * 100).toFixed(2)} céntimos/kWh`
+    : '';
+  const permanencia = mejorTarifa.tiene_permanencia ? '12 meses de permanencia' : 'sin permanencia';
 
   let mensaje = `💡 ¡Buenas noticias! Hemos analizado tu factura de ${datosFactura.compania || 'tu compañía'}.
 
-Con ${mejorTarifa.compania} podrías ahorrar:
-💰 ~${ahorroAnual}€ al año (${pctAhorro}% menos)`;
+Con *${mejorTarifa.compania}* (${mejorTarifa.nombre_tarifa}) podrías ahorrar:
+💰 *~${ahorroAnual}€ al año* (${pctAhorro}% menos)
+⚡ Precio luz: ${precioKwhVisible} · ${permanencia}
 
-  if (mejorTarifa.bateria_virtual) {
-    mensaje += `\n⚡ Incluye batería virtual con compensación a ${mejorTarifa.compensacion_excedentes}€/kWh`;
-  }
-
-  mensaje += `\n\n👇 Tu informe personalizado:`;
+👇 Tu informe personalizado:`;
 
   return {
     mensaje,
     ahorro: ahorroAnual,
     tarifa: mejorTarifa,
     datosComparativa: {
-      precio_actual_mes: parseFloat(costeActualMes.toFixed(2)),
-      precio_nuevo_mes: precioNuevoMes,
-      precio_actual_anual: precioActualAnual,
-      precio_nuevo_anual: parseFloat((precioNuevoMes * 12).toFixed(2)),
-      ahorro_anual: ahorroAnual,
-      pct_ahorro: pctAhorro,
-      consumo_p1: consumoP1,
-      consumo_p2: consumoP2,
-      consumo_p3: consumoP3,
-      consumo_total: consumoTotal,
-      dias: diasFactura,
-      potencia,
+      precio_actual_mes:    precioActualMes,
+      precio_nuevo_mes:     precioNuevoMes,
+      precio_actual_anual:  parseFloat((precioActualMes * 12).toFixed(2)),
+      precio_nuevo_anual:   parseFloat((precioNuevoMes * 12).toFixed(2)),
+      ahorro_anual:         ahorroAnual,
+      pct_ahorro:           pctAhorro,
+      consumo_p1: consumoP1, consumo_p2: consumoP2, consumo_p3: consumoP3,
+      consumo_total: consumoTotal, dias: diasFactura, potencia,
     }
   };
 }
