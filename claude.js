@@ -120,10 +120,10 @@ CAMPOS REQUERIDOS:
   "compania": "nombre de la compañía",
   "fecha_factura": "YYYY-MM-DD",
   "dias_facturacion": número de días del periodo facturado,
-  "consumo_kwh": consumo TOTAL en kWh de la RED (suma P1+P2+P3 si los hay). NO incluir autoconsumo,
-  "consumo_p1_kwh": kWh en periodo punta (P1) consumidos de la red o null,
-  "consumo_p2_kwh": kWh en periodo llano (P2) consumidos de la red o null,
-  "consumo_p3_kwh": kWh en periodo valle (P3) consumidos de la red o null,
+  "consumo_kwh": consumo TOTAL en kWh (suma de todos los periodos P1+P2+P3 si los hay),
+  "consumo_p1_kwh": kWh en periodo punta (P1) o null,
+  "consumo_p2_kwh": kWh en periodo llano (P2) o null,
+  "consumo_p3_kwh": kWh en periodo valle (P3) o null,
   "potencia_kw": potencia contratada en kW (P1),
   "precio_kwh": precio medio €/kWh = importe_total_energia / consumo_total_kwh,
   "precio_kwh_p1": precio €/kWh del periodo P1 o null,
@@ -131,25 +131,24 @@ CAMPOS REQUERIDOS:
   "precio_kwh_p3": precio €/kWh del periodo P3 o null,
   "precio_potencia_dia": precio €/kW/día de potencia P1 (precio unitario, NO importe total),
   "precio_potencia_dia_p2": precio €/kW/día de potencia P2 o null,
-  "importe_energia": importe total en € solo de energía de red (sin impuestos ni potencia),
+  "importe_energia": importe total en € solo de energía (sin impuestos ni potencia),
   "importe_potencia": importe total en € solo de potencia (sin impuestos),
-  "precio_total": ⚠️ CRÍTICO: USA el subtotal ANTES de descuentos promocionales tipo "PARA TI", "Descuento bienvenida", "Dto. fidelización". TAMBIÉN ignora la compensación de excedentes/autoconsumo para precio_total (la tratamos por separado). Ejemplo: "TOTAL 46,59€" → "PARA TI -20€" → precio_total = 46.59,
-  "cups": "código CUPS completo" o null,
-  "tiene_autoconsumo": true si hay placas solares, autoconsumo, compensación de excedentes o batería virtual mencionados en la factura,
-  "tiene_bateria_virtual": true si aparece explícitamente "batería virtual" o "compensación batería",
-  "excedentes_kwh": ⚠️ MUY IMPORTANTE: kWh exportados/vertidos a la red o autoconsumidos. Busca términos como "energía autoconsumida", "energía exportada", "excedentes", "compensación excedentes X kWh", "energía generada". Si aparece el importe de compensación pero NO los kWh, calcula: kWh = importe_compensacion / 0.06 (precio medio de compra de excedentes). Devuelve el número de kWh,
-  "compensacion_excedentes_importe": importe en € que le descuentan/compensan por excedentes o autoconsumo. Busca líneas como "Compensación excedentes -X,XX€", "Ahorro autoconsumo", "Descuento excedentes". Devuelve el valor absoluto (positivo),
+  "precio_total": ⚠️ CRÍTICO: USA el subtotal de electricidad ANTES de descuentos promocionales temporales. Si la factura muestra líneas separadas como "PARA TI", "Descuento bienvenida", "Dto. fidelización", "Bonificación comercial" u otras FUERA del bloque estándar de Descuentos de tarifa, IGNÓRALAS COMPLETAMENTE. Usa el importe JUSTO antes de esas líneas adicionales. EJEMPLO: si aparece "TOTAL ELECTRICIDAD 46,59€" luego "PARA TI -20,00€" luego "TOTAL A PAGAR 32,37€", entonces precio_total = 46.59 (NO 32.37),
+  "cups": "código CUPS" o null,
+  "tiene_autoconsumo": true o false,
+  "tiene_bateria_virtual": true o false,
+  "excedentes_kwh": kWh exportados o null,
+  "compensacion_excedentes_importe": € de compensación o null,
   "tipo_tarifa": "2.0TD" o "3.0TD",
   "precio_fijo_mes": € fijo mensual o null,
   "consumo_anual_estimado": kWh anuales estimados o null
 }
 
 REGLAS IMPORTANTES:
-- consumo_kwh: SIEMPRE suma P1+P2+P3 si hay periodos. Es el consumo de RED, no el total generado por las placas
-- precio_kwh: DIVIDE importe_energia / consumo_kwh
-- precio_potencia_dia: es el precio UNITARIO €/kW/día, NO el importe total
-- precio_total: ANTES de descuentos promocionales Y ANTES de compensación de excedentes
-- excedentes_kwh: si ves "compensación X,XX €" sin kWh → calcula kWh = X,XX / 0.06
+- consumo_kwh: SIEMPRE suma P1+P2+P3 si hay periodos. Ejemplo: 298+205+367 = 870 kWh
+- precio_kwh: DIVIDE importe_energia / consumo_kwh. NO uses precios de líneas individuales
+- precio_potencia_dia: es el precio UNITARIO €/kW/día (ej: 0.097), NO el importe total
+- precio_total: USA siempre el subtotal ANTES de descuentos promocionales tipo "PARA TI", "Bienvenida", "Dto. fidelización". Si ves "TOTAL 46,59€" → "PARA TI -20€" → "TOTAL A PAGAR 32,37€", precio_total = 46.59
 - Si no aparece un dato, pon null`
         }
       ]
@@ -157,19 +156,7 @@ REGLAS IMPORTANTES:
   });
 
   try {
-    const datos = parseJSONSafe(response.content[0].text);
-
-    // Post-proceso: si hay importe de compensación pero no kWh, calcularlos
-    if (datos && datos.compensacion_excedentes_importe && !datos.excedentes_kwh) {
-      datos.excedentes_kwh = parseFloat((datos.compensacion_excedentes_importe / 0.06).toFixed(2));
-      console.log(`[OCR] excedentes_kwh calculados por regla de tres: ${datos.excedentes_kwh} kWh`);
-    }
-    // Asegurar tiene_autoconsumo si hay excedentes
-    if (datos && (datos.excedentes_kwh > 0 || datos.compensacion_excedentes_importe > 0)) {
-      datos.tiene_autoconsumo = true;
-    }
-
-    return datos;
+    return parseJSONSafe(response.content[0].text);
   } catch (e) {
     console.error('Error parseando factura:', e);
     return null;
@@ -177,42 +164,29 @@ REGLAS IMPORTANTES:
 }
 
 // ─── COMPARATIVA DE LUZ ───────────────────────────────────────────────────────
-// REGLA DE NEGOCIO:
-//   · Cliente con IBERDROLA → ofrecemos GANA ENERGÍA
-//   · Cualquier otro cliente  → ofrecemos IBERDROLA IMPULSA 24H
-// El precio mostrado al cliente incluye siempre el descuento promocional.
 function esIberdrola(compania) { return (compania || '').toLowerCase().includes('iberdrola'); }
 function esGana(compania)      { return (compania || '').toLowerCase().includes('gana'); }
 function esNaturgy(compania)   { return (compania || '').toLowerCase().includes('naturgy'); }
 
-// Calcula el coste mensual de una tarifa con gestión inteligente de periodos
 function calcularCosteTarifa(tarifa, consumoTotal, consumoP1, consumoP2, consumoP3,
   potencia, factor, tieneTriperiodo, excedentesKwh, tieneAutoconsumo, tieneBateriaVirtual) {
 
-  // ¿Es esta tarifa realmente triperiodo (precios distintos por tramo)?
   const esTarifaTriperiodo = tarifa.precio_kwh_p2 && tarifa.precio_kwh_p3 &&
     (tarifa.precio_kwh_p2 !== tarifa.precio_kwh_p1 || tarifa.precio_kwh_p3 !== tarifa.precio_kwh_p1);
 
   let costeEnergia = 0;
-
   if (tieneTriperiodo && esTarifaTriperiodo) {
-    // Caso ideal: factura con desglose real P1/P2/P3 y tarifa triperiodo
     costeEnergia =
       (consumoP1 * factor * tarifa.precio_kwh_p1) +
       (consumoP2 * factor * tarifa.precio_kwh_p2) +
       (consumoP3 * factor * tarifa.precio_kwh_p3);
-
   } else if (!tieneTriperiodo && esTarifaTriperiodo) {
-    // Factura sin desglose de periodos pero tarifa triperiodo (ej: Naturgy Noche Luz)
-    // Usamos distribución típica española 2.0TD: 30% P1 · 20% P2 · 50% P3
-    // Esto favorece a Noche Luz en el valle nocturno (0.0718 €/kWh)
+    // Sin desglose: distribución típica española 30% P1 · 20% P2 · 50% P3
     costeEnergia =
       (consumoTotal * 0.30 * factor * tarifa.precio_kwh_p1) +
       (consumoTotal * 0.20 * factor * tarifa.precio_kwh_p2) +
       (consumoTotal * 0.50 * factor * tarifa.precio_kwh_p3);
-
   } else {
-    // Tarifa plana 24h (mismo precio todo el día)
     costeEnergia = consumoTotal * factor * (tarifa.precio_kwh_p1 || tarifa.precio_kwh || 0);
   }
 
@@ -222,11 +196,7 @@ function calcularCosteTarifa(tarifa, consumoTotal, consumoP1, consumoP2, consumo
 
   let descuentoBV = 0;
   if ((tieneAutoconsumo || tieneBateriaVirtual) && excedentesKwh > 0) {
-    // Precio de compra de excedentes según compañía ofertada:
-    // Gana Energía → 0.05 €/kWh
-    // Iberdrola, Naturgy y resto → 0.06 €/kWh
-    const companiaLower = (tarifa.compania || '').toLowerCase();
-    const precioExcedentes = companiaLower.includes('gana') ? 0.05 : 0.06;
+    const precioExcedentes = (tarifa.compania || '').toLowerCase().includes('gana') ? 0.05 : 0.06;
     descuentoBV = (excedentesKwh * factor) * precioExcedentes;
   }
 
@@ -244,82 +214,45 @@ async function generarComparativa(datosFactura, tarifas) {
   const tieneTriperiodo = consumoP1 > 0 || consumoP2 > 0 || consumoP3 > 0;
   const costeActualMes  = (datosFactura.precio_total / diasFactura) * 30;
 
-  const clienteCompania    = (datosFactura.compania || '').toLowerCase();
-  const clienteEsIberdrola = esIberdrola(clienteCompania);
-  const clienteEsGana      = esGana(clienteCompania);
-  const clienteEsNaturgy   = esNaturgy(clienteCompania);
-
+  const clienteCompania = (datosFactura.compania || '').toLowerCase();
   const args = [consumoTotal, consumoP1, consumoP2, consumoP3, potencia, factor, tieneTriperiodo,
     datosFactura.excedentes_kwh || 0, datosFactura.tiene_autoconsumo, datosFactura.tiene_bateria_virtual];
 
-  // Solo tarifas de luz en rango de potencia del cliente
-  const tarifasLuz = tarifas.filter(t => {
+  // Todas las tarifas de luz en rango de potencia, excluyendo la del cliente
+  const tarifasCandidatas = tarifas.filter(t => {
     const min = t.potencia_min_kw || 0;
     const max = t.potencia_max_kw || 15;
-    return potencia >= min && potencia <= max && t.tipo_suministro !== 'gas';
+    if (potencia < min || potencia > max) return false;
+    if (t.tipo_suministro === 'gas') return false;
+    const companiaT = (t.compania || '').toLowerCase();
+    const palabra = clienteCompania.split(' ')[0];
+    return palabra.length < 3 ? !companiaT.includes(clienteCompania) : !companiaT.includes(palabra);
   });
 
-  // Función auxiliar: mejor tarifa dentro de un subconjunto
-  function mejorDe(lista) {
-    let best = null, bestAhorro = 0, bestCoste = 0;
-    for (const t of lista) {
-      const coste = calcularCosteTarifa(t, ...args);
-      const ahorro = costeActualMes - coste;
-      if (ahorro > 3 && ahorro > bestAhorro) {
-        best = t; bestAhorro = ahorro; bestCoste = coste;
-      }
+  // Gana siempre la que más ahorro real genera — sin preferencias fijas por compañía
+  let mejorTarifa = null, mejorAhorro = 0, mejorCoste = 0;
+  for (const tarifa of tarifasCandidatas) {
+    const coste  = calcularCosteTarifa(tarifa, ...args);
+    const ahorro = costeActualMes - coste;
+    if (ahorro > 3 && ahorro > mejorAhorro) {
+      mejorTarifa = tarifa; mejorAhorro = ahorro; mejorCoste = coste;
     }
-    return { tarifa: best, ahorro: bestAhorro, coste: bestCoste };
   }
 
-  // ── PASO 1: Tarifa principal según compañía del cliente ──────────────────
-  let resultado = { tarifa: null, ahorro: 0, coste: 0 };
-
-  if (clienteEsIberdrola) {
-    resultado = mejorDe(tarifasLuz.filter(t => esGana(t.compania)));
-  } else if (clienteEsGana) {
-    resultado = mejorDe(tarifasLuz.filter(t => esIberdrola(t.compania)));
-  } else if (clienteEsNaturgy) {
-    // Cliente de Naturgy → intentar Iberdrola primero, luego Gana
-    resultado = mejorDe(tarifasLuz.filter(t => esIberdrola(t.compania)));
-    if (!resultado.tarifa) {
-      resultado = mejorDe(tarifasLuz.filter(t => esGana(t.compania)));
-    }
-  } else {
-    // Resto de compañías → Iberdrola primero
-    resultado = mejorDe(tarifasLuz.filter(t => esIberdrola(t.compania)));
-  }
-
-  // ── PASO 2: Si no hay ahorro con la principal → probar Naturgy ───────────
-  if (!resultado.tarifa) {
-    const resNaturgy = mejorDe(tarifasLuz.filter(t => esNaturgy(t.compania)));
-    if (resNaturgy.tarifa) resultado = resNaturgy;
-  }
-
-  // ── PASO 3: Último recurso — cualquier tarifa activa distinta a la suya ──
-  if (!resultado.tarifa) {
-    const resOtras = mejorDe(tarifasLuz.filter(t =>
-      !clienteCompania.includes((t.compania || '').toLowerCase().split(' ')[0])
-    ));
-    if (resOtras.tarifa) resultado = resOtras;
-  }
-
-  if (!resultado.tarifa) {
+  if (!mejorTarifa) {
     return {
       mensaje: '✅ Ya tienes una tarifa muy competitiva. ¡Estás pagando un precio justo! Te avisaremos si detectamos una bajada de precios que te beneficie.',
       ahorro: 0, tarifa: null, datosComparativa: null
     };
   }
 
-  const { tarifa: mejorTarifa, ahorro: mejorAhorro, coste: mejorCoste } = resultado;
   const ahorroAnual     = parseFloat((mejorAhorro * 12).toFixed(2));
   const precioNuevoMes  = parseFloat(mejorCoste.toFixed(2));
   const precioActualMes = parseFloat(costeActualMes.toFixed(2));
   const pctAhorro       = Math.round((mejorAhorro / costeActualMes) * 100);
 
   const precioKwhVisible = mejorTarifa.precio_kwh_p1
-    ? `${mejorTarifa.precio_kwh_p1.toFixed(4)} €/kWh`
-    : '';
+    ? `${mejorTarifa.precio_kwh_p1.toFixed(4)} €/kWh` : '';
   const permanencia = mejorTarifa.tiene_permanencia ? 'con 12 meses de permanencia' : 'sin permanencia';
 
   const mensaje = `💡 ¡Buenas noticias! Hemos analizado tu factura de ${datosFactura.compania || 'tu compañía'}.
@@ -533,8 +466,7 @@ function generarResumenHistorial(datosFactura, comparativa) {
     `Total factura (con IVA): ${f.precio_total || 0}€`,
     f.tiene_autoconsumo ? `Autoconsumo: SÍ` : null,
     f.tiene_bateria_virtual ? `Batería virtual: SÍ` : null,
-    f.excedentes_kwh ? `Excedentes/kWh generados: ${f.excedentes_kwh} kWh` : null,
-    f.compensacion_excedentes_importe ? `Compensación excedentes en factura actual: ${f.compensacion_excedentes_importe}€` : null,
+    f.excedentes_kwh ? `Excedentes: ${f.excedentes_kwh} kWh` : null,
     f.consumo_anual_estimado ? `Consumo anual estimado: ${f.consumo_anual_estimado} kWh` : null,
   ].filter(Boolean).join('. ');
 
