@@ -218,8 +218,8 @@ async function generarComparativa(datosFactura, tarifas) {
   const args = [consumoTotal, consumoP1, consumoP2, consumoP3, potencia, factor, tieneTriperiodo,
     datosFactura.excedentes_kwh || 0, datosFactura.tiene_autoconsumo, datosFactura.tiene_bateria_virtual];
 
-  // Todas las tarifas de luz en rango de potencia, excluyendo la del cliente
-  const tarifasCandidatas = tarifas.filter(t => {
+  // Tarifas de luz en rango de potencia, excluyendo la compañía del cliente
+  const candidatas = tarifas.filter(t => {
     const min = t.potencia_min_kw || 0;
     const max = t.potencia_max_kw || 15;
     if (potencia < min || potencia > max) return false;
@@ -229,30 +229,45 @@ async function generarComparativa(datosFactura, tarifas) {
     return palabra.length < 3 ? !companiaT.includes(clienteCompania) : !companiaT.includes(palabra);
   });
 
-  // Gana siempre la que más ahorro real genera — sin preferencias fijas por compañía
-  let mejorTarifa = null, mejorAhorro = 0, mejorCoste = 0;
-  for (const tarifa of tarifasCandidatas) {
-    const coste  = calcularCosteTarifa(tarifa, ...args);
-    const ahorro = costeActualMes - coste;
-    if (ahorro > 3 && ahorro > mejorAhorro) {
-      mejorTarifa = tarifa; mejorAhorro = ahorro; mejorCoste = coste;
+  // ── PRIORIDAD: Iberdrola → Gana → Naturgy (última opción, menor comisión) ──
+  // Dentro de cada grupo, gana la tarifa con más ahorro real.
+  function mejorDe(filtro) {
+    let best = null, bestAhorro = 0, bestCoste = 0;
+    for (const t of candidatas.filter(filtro)) {
+      const coste  = calcularCosteTarifa(t, ...args);
+      const ahorro = costeActualMes - coste;
+      if (ahorro > 3 && ahorro > bestAhorro) { best = t; bestAhorro = ahorro; bestCoste = coste; }
     }
+    return { tarifa: best, ahorro: bestAhorro, coste: bestCoste };
   }
 
-  if (!mejorTarifa) {
+  let resultado = mejorDe(t => esIberdrola(t.compania));
+  if (!resultado.tarifa) resultado = mejorDe(t => esGana(t.compania));
+  if (!resultado.tarifa) resultado = mejorDe(t => esNaturgy(t.compania));
+  if (!resultado.tarifa) resultado = mejorDe(() => true); // último recurso
+
+  if (!resultado.tarifa) {
     return {
       mensaje: '✅ Ya tienes una tarifa muy competitiva. ¡Estás pagando un precio justo! Te avisaremos si detectamos una bajada de precios que te beneficie.',
       ahorro: 0, tarifa: null, datosComparativa: null
     };
   }
 
+  const { tarifa: mejorTarifa, ahorro: mejorAhorro, coste: mejorCoste } = resultado;
   const ahorroAnual     = parseFloat((mejorAhorro * 12).toFixed(2));
   const precioNuevoMes  = parseFloat(mejorCoste.toFixed(2));
   const precioActualMes = parseFloat(costeActualMes.toFixed(2));
   const pctAhorro       = Math.round((mejorAhorro / costeActualMes) * 100);
 
-  const precioKwhVisible = mejorTarifa.precio_kwh_p1
-    ? `${mejorTarifa.precio_kwh_p1.toFixed(4)} €/kWh` : '';
+  // Para tarifas triperiodo mostrar "desde X €/kWh" con el precio MÁS BARATO (P3)
+  // Para tarifas planas mostrar el precio único
+  const esTarifaTriperiodo = mejorTarifa.precio_kwh_p3 &&
+    mejorTarifa.precio_kwh_p3 !== mejorTarifa.precio_kwh_p1;
+  const precioKwhVisible = esTarifaTriperiodo
+    ? `desde ${mejorTarifa.precio_kwh_p3.toFixed(4)} €/kWh`
+    : mejorTarifa.precio_kwh_p1
+      ? `${mejorTarifa.precio_kwh_p1.toFixed(4)} €/kWh`
+      : '';
   const permanencia = mejorTarifa.tiene_permanencia ? 'con 12 meses de permanencia' : 'sin permanencia';
 
   const mensaje = `💡 ¡Buenas noticias! Hemos analizado tu factura de ${datosFactura.compania || 'tu compañía'}.
