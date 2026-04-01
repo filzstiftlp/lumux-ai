@@ -141,7 +141,9 @@ CAMPOS REQUERIDOS:
   "compensacion_excedentes_importe": € de compensación o null,
   "tipo_tarifa": "2.0TD" o "3.0TD",
   "precio_fijo_mes": € fijo mensual o null,
-  "consumo_anual_estimado": kWh anuales estimados o null
+  "consumo_anual_estimado": kWh anuales estimados o null,
+  "nombre_titular": "nombre completo del titular que aparece en la factura (ej: MANUEL GARCIA LOPEZ)" o null,
+  "dni_titular": "DNI o NIF del titular si aparece (formato 12345678X)" o null
 }
 
 REGLAS IMPORTANTES:
@@ -353,7 +355,9 @@ Devuelve SOLO el JSON, sin texto adicional ni backticks:
   "precio_total": ⚠️ USA SOLO: término_fijo + gas_consumido + impuesto_hidrocarburos + IVA. IGNORA completamente líneas de "Varios", "Canon IRC", "Servicio adicional", "Asistente", "Alquileres" y cualquier servicio extra. El precio_total debe reflejar solo el coste puro del gas,
   "tarifa_acceso": "RL.1", "RL.2" o "RL.3" según aparezca en la factura,
   "cups": "código CUPS completo o null",
-  "consumo_anual_estimado": kWh anuales estimados si aparece en la factura, o null
+  "consumo_anual_estimado": kWh anuales estimados si aparece en la factura, o null,
+  "nombre_titular": "nombre completo del titular que aparece en la factura" o null,
+  "dni_titular": "DNI o NIF del titular si aparece (formato 12345678X)" o null
 }
 REGLA CRÍTICA precio_total: término_fijo + (consumo_kwh × precio_kwh) + impuesto_hidrocarburos + IVA 21%. NO incluir servicios de valor añadido.`
         }
