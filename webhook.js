@@ -520,7 +520,10 @@ router.post('/contrato', async (req, res) => {
       }
     }
 
-    // ─── 2. Guardar titular + marcar oferta firmada + nota historial ──────
+    // ─── Nombre real: prioridad informe (nombre de factura) > form > fallback ─
+    const nombreReal = informeData?.nombre || nombre || '—';
+
+    // ─── 2. Guardar titular + marcar oferta firmada (operaciones críticas BD) ──
     if (informeData?.usuario_id) {
       await db.supabase.from('titulares').upsert({
         usuario_id:      informeData.usuario_id,
@@ -540,16 +543,6 @@ router.post('/contrato', async (req, res) => {
 
       await db.actualizarEstado(informeData.usuario_id, 'contratado');
 
-      // ─── META CAPI: Purchase (conversión real) ────────────────────────────
-      meta.enviarPurchase({
-        telefono: informeData.telefono,
-        email,
-        ahorroAnual: ahorro_anual,
-        compania:    nueva_compania,
-      }).catch(() => {});
-      // ─────────────────────────────────────────────────────────────────────
-
-      // Nota en historial → bot sabrá del contrato en futuras conversaciones
       const cupsNota = propiedadData?.cups || informeData?.cups || 'no disponible';
       await db.guardarMensaje(
         informeData.usuario_id, 'assistant',
@@ -558,10 +551,22 @@ router.post('/contrato', async (req, res) => {
       );
     }
 
-    // ─── Nombre real: prioridad factura (informeData) > form > WhatsApp ──────
-    // NUNCA usar el nombre del req.body como fuente principal — puede venir
-    // de un informe anterior o del nombre de WhatsApp, no del titular real.
-    const nombreReal = informeData?.nombre || nombre || '—';
+    // ─── RESPONDER AL CLIENTE INMEDIATAMENTE ─────────────────────────────────
+    // El cliente ve "solicitud enviada" de inmediato. Email y WA van en background.
+    res.json({ ok: true });
+
+    // ─── BACKGROUND: email + WhatsApp + Meta CAPI ────────────────────────────
+    setImmediate(async () => {
+      try {
+
+      // ─── META CAPI: Purchase ──────────────────────────────────────────────
+      meta.enviarPurchase({
+        telefono: informeData?.telefono,
+        email,
+        ahorroAnual: ahorro_anual,
+        compania:    nueva_compania,
+      }).catch(() => {});
+
     const cups           = propiedadData?.cups || informeData?.cups || 'No disponible';
     const direccion      = [propiedadData?.direccion, propiedadData?.codigo_postal, propiedadData?.ciudad, propiedadData?.provincia].filter(Boolean).join(', ') || '—';
     const compania_actual = informeData?.compania_actual || facturaData?.compania || '—';
@@ -655,15 +660,16 @@ router.post('/contrato', async (req, res) => {
         );
         console.log(`[Contrato] WA confirmación enviado → ${telefonoCliente}`);
       } catch(e) { console.error('[Contrato] WA confirm error:', e.message); }
-    } else {
-      console.warn('[Contrato] ⚠️ Sin teléfono en informeData — WA confirmación no enviado');
     }
 
-    res.json({ ok: true });
+      } catch(bgErr) {
+        console.error('[Contrato] Error en background (email/WA/Meta):', bgErr.message);
+      }
+    }); // fin setImmediate
 
   } catch (error) {
     console.error('[Contrato] Error:', error);
-    res.status(500).json({ ok: false, error: error.message });
+    if (!res.headersSent) res.status(500).json({ ok: false, error: error.message });
   }
 });
 
