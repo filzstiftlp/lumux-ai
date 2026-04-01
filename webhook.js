@@ -235,7 +235,8 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     const informeGuardado = await db.guardarInforme({
       usuario_id:        usuario.id,
       factura_id:        factura.id,
-      nombre:            usuario.nombre,
+      nombre:            datosFactura.nombre_titular || usuario.nombre,
+      dni:               datosFactura.dni_titular || null,
       telefono:          telefono,
       cups:              cups,
       compania_actual:   datosFactura.compania,
@@ -614,10 +615,11 @@ router.post('/contrato', async (req, res) => {
         <table style="border-collapse:collapse;width:100%;font-size:14px">
           <tr><td colspan="2" style="padding:10px 12px;background:#f0fdf4;font-weight:700;color:#15803d;font-size:12px;letter-spacing:.05em">DATOS DEL TITULAR</td></tr>
           ${r('Nombre titular', nombreReal)}
-          ${r('Email', email, true)}
-          ${r('IBAN', `<span style="font-family:monospace">${iban}</span>`)}
-          ${r('Dirección', direccion, true)}
-          ${r('CUPS', `<span style="font-family:monospace">${cups}</span>`)}
+          ${r('DNI / NIF', informeData?.dni || '—', true)}
+          ${r('Email', email)}
+          ${r('IBAN', `<span style="font-family:monospace">${iban}</span>`, true)}
+          ${r('Dirección', direccion)}
+          ${r('CUPS', `<span style="font-family:monospace">${cups}</span>`, true)}
           <tr><td colspan="2" style="padding:10px 12px;background:#eff6ff;font-weight:700;color:#1d4ed8;font-size:12px;letter-spacing:.05em">DATOS DE LA FACTURA ACTUAL</td></tr>
           ${r('Compañía actual', compania_actual)}
           ${r('Fecha factura', fecha_factura, true)}
