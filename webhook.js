@@ -186,17 +186,6 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
   // Guardar/actualizar propiedad con el CUPS
   const propiedadId = await db.upsertPropiedad(usuario.id, cups);
 
-  // Nombre real: prioridad factura → WhatsApp
-  const nombreTitular = datosFactura.nombre_titular || usuario.nombre || null;
-  const dniTitular    = datosFactura.dni_titular    || null;
-
-  // Actualizar nombre del usuario si la factura tiene uno más completo
-  if (datosFactura.nombre_titular && datosFactura.nombre_titular !== usuario.nombre) {
-    await db.supabase.from('usuarios')
-      .update({ nombre: datosFactura.nombre_titular })
-      .eq('id', usuario.id);
-  }
-
   // ─── GUARDAR FACTURA ─────────────────────────────────────────────────────
   const factura = await db.guardarFactura(usuario.id, {
     propiedad_id:     propiedadId,
@@ -246,8 +235,7 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     const informeGuardado = await db.guardarInforme({
       usuario_id:        usuario.id,
       factura_id:        factura.id,
-      nombre:            nombreTitular,
-      dni:               dniTitular,
+      nombre:            usuario.nombre,
       telefono:          telefono,
       cups:              cups,
       compania_actual:   datosFactura.compania,
@@ -287,7 +275,7 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
 
     try {
       await enviarPlantillaInforme(
-        telefono, nombreTitular, datosFactura.compania,
+        telefono, usuario.nombre, datosFactura.compania,
         comparativa.tarifa.compania, comparativa.ahorro, d.pct_ahorro, informeGuardado.short_id
       );
       respuesta = null;
@@ -537,7 +525,6 @@ router.post('/contrato', async (req, res) => {
       await db.supabase.from('titulares').upsert({
         usuario_id:      informeData.usuario_id,
         nombre:          nombre || informeData.nombre,
-        dni_cif:         informeData.dni || null,
         email,
         cuenta_bancaria: iban.replace(/\s/g, '').toUpperCase(),
         updated_at:      new Date().toISOString(),
@@ -618,8 +605,7 @@ router.post('/contrato', async (req, res) => {
         <table style="border-collapse:collapse;width:100%;font-size:14px">
           <tr><td colspan="2" style="padding:10px 12px;background:#f0fdf4;font-weight:700;color:#15803d;font-size:12px;letter-spacing:.05em">DATOS DEL TITULAR</td></tr>
           ${r('Nombre titular', nombre || '—')}
-          ${r('DNI / NIF', informeData?.dni || '—', true)}
-          ${r('Email', email)}
+          ${r('Email', email, true)}
           ${r('IBAN', `<span style="font-family:monospace">${iban}</span>`)}
           ${r('Dirección', direccion, true)}
           ${r('CUPS', `<span style="font-family:monospace">${cups}</span>`)}
@@ -673,6 +659,164 @@ router.post('/contrato', async (req, res) => {
 
   } catch (error) {
     console.error('[Contrato] Error:', error);
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+
+// ─── /admin/exportar-leads ────────────────────────────────────────────────────
+// Genera un Excel mensual con 3 hojas: Clase1 (firmaron), Clase2 (factura sin contrato), Clase3 (solo mensajes)
+// Protegido con ADMIN_SECRET para que no sea público
+router.get('/admin/exportar-leads', async (req, res) => {
+  try {
+    // Protección básica por token
+    const secret = req.query.secret || req.headers['x-admin-secret'];
+    if (secret !== process.env.ADMIN_SECRET) {
+      return res.status(401).json({ ok: false, error: 'No autorizado' });
+    }
+
+    const XLSX = require('xlsx');
+
+    // ─── Rango de fechas (por defecto: mes actual) ─────────────────────────
+    const ahora = new Date();
+    const año   = parseInt(req.query.año  || ahora.getFullYear());
+    const mes   = parseInt(req.query.mes  || ahora.getMonth() + 1); // 1-12
+    const desde = new Date(año, mes - 1, 1).toISOString();
+    const hasta = new Date(año, mes, 1).toISOString();
+
+    // ─── CLASE 1: Contrataciones firmadas ─────────────────────────────────
+    const { data: clase1 } = await db.supabase
+      .from('ofertas')
+      .select(`
+        fecha_firmado,
+        ahorro_estimado,
+        tarifas(compania, nombre_tarifa),
+        facturas(compania, consumo_kwh, potencia_kw, precio_total, cups, fecha_factura),
+        usuarios(nombre, telefono, estado),
+        informes(nombre, telefono, dni, cups, nueva_compania, ahorro_anual, pct_ahorro)
+      `)
+      .eq('estado', 'firmada')
+      .gte('fecha_firmado', desde)
+      .lt('fecha_firmado', hasta)
+      .order('fecha_firmado', { ascending: false });
+
+    const { data: titulares } = await db.supabase
+      .from('titulares')
+      .select('usuario_id, email, cuenta_bancaria, dni_cif');
+    const titularMap = {};
+    (titulares || []).forEach(t => { titularMap[t.usuario_id] = t; });
+
+    const filas1 = (clase1 || []).map(o => {
+      const inf = Array.isArray(o.informes) ? o.informes[0] : o.informes;
+      const fac = Array.isArray(o.facturas) ? o.facturas[0] : o.facturas;
+      const usu = Array.isArray(o.usuarios) ? o.usuarios[0] : o.usuarios;
+      const tar = Array.isArray(o.tarifas)  ? o.tarifas[0]  : o.tarifas;
+      const tit = titularMap[usu?.id] || {};
+      return {
+        'Fecha firma':        o.fecha_firmado ? new Date(o.fecha_firmado).toLocaleDateString('es-ES') : '—',
+        'Nombre titular':     inf?.nombre || usu?.nombre || '—',
+        'DNI / NIF':          inf?.dni    || tit?.dni_cif || '—',
+        'Teléfono':           inf?.telefono || usu?.telefono || '—',
+        'Email':              tit?.email || '—',
+        'IBAN':               tit?.cuenta_bancaria || '—',
+        'CUPS':               inf?.cups || fac?.cups || '—',
+        'Compañía actual':    fac?.compania || '—',
+        'Nueva compañía':     inf?.nueva_compania || tar?.compania || '—',
+        'Nueva tarifa':       tar?.nombre_tarifa || '—',
+        'Consumo kWh':        fac?.consumo_kwh || '—',
+        'Potencia kW':        fac?.potencia_kw || '—',
+        'Importe factura €':  fac?.precio_total || '—',
+        'Ahorro anual €':     inf?.ahorro_anual || o.ahorro_estimado || '—',
+        'Ahorro %':           inf?.pct_ahorro || '—',
+      };
+    });
+
+    // ─── CLASE 2: Enviaron factura, NO firmaron ────────────────────────────
+    const { data: clase2raw } = await db.supabase
+      .from('informes')
+      .select(`
+        nombre, telefono, dni, cups, compania_actual, nueva_compania,
+        consumo_kwh, potencia_kw, precio_actual_mes, ahorro_anual, pct_ahorro,
+        created_at, visto, fecha_visto,
+        ofertas(estado)
+      `)
+      .gte('created_at', desde)
+      .lt('created_at', hasta)
+      .order('created_at', { ascending: false });
+
+    // Excluir los que firmaron
+    const filas2 = (clase2raw || [])
+      .filter(inf => {
+        const oferta = Array.isArray(inf.ofertas) ? inf.ofertas[0] : inf.ofertas;
+        return !oferta || oferta.estado !== 'firmada';
+      })
+      .map(inf => ({
+        'Fecha análisis':     new Date(inf.created_at).toLocaleDateString('es-ES'),
+        'Nombre':             inf.nombre || '—',
+        'DNI / NIF':          inf.dni || '—',
+        'Teléfono':           inf.telefono || '—',
+        'CUPS':               inf.cups || '—',
+        'Compañía actual':    inf.compania_actual || '—',
+        'Mejor oferta':       inf.nueva_compania || '—',
+        'Consumo kWh':        inf.consumo_kwh || '—',
+        'Potencia kW':        inf.potencia_kw || '—',
+        'Factura actual €/mes': inf.precio_actual_mes || '—',
+        'Ahorro anual €':     inf.ahorro_anual || '—',
+        'Ahorro %':           inf.pct_ahorro || '—',
+        'Vio el informe':     inf.visto ? 'Sí' : 'No',
+        'Fecha visto':        inf.fecha_visto ? new Date(inf.fecha_visto).toLocaleDateString('es-ES') : '—',
+      }));
+
+    // ─── CLASE 3: Solo mensajes, nunca enviaron factura ───────────────────
+    const { data: todosUsuarios } = await db.supabase
+      .from('usuarios')
+      .select('id, nombre, telefono, estado, created_at')
+      .gte('created_at', desde)
+      .lt('created_at', hasta)
+      .order('created_at', { ascending: false });
+
+    // IDs que sí tienen factura
+    const { data: usuariosConFactura } = await db.supabase
+      .from('facturas')
+      .select('usuario_id')
+      .gte('created_at', desde)
+      .lt('created_at', hasta);
+    const idsConFactura = new Set((usuariosConFactura || []).map(f => f.usuario_id));
+
+    const filas3 = (todosUsuarios || [])
+      .filter(u => !idsConFactura.has(u.id))
+      .map(u => ({
+        'Fecha entrada':  new Date(u.created_at).toLocaleDateString('es-ES'),
+        'Nombre':         u.nombre || '—',
+        'Teléfono':       u.telefono || '—',
+        'Estado bot':     u.estado || '—',
+      }));
+
+    // ─── Generar Excel ─────────────────────────────────────────────────────
+    const wb = XLSX.utils.book_new();
+
+    const addSheet = (nombre, filas, color) => {
+      const ws = filas.length > 0
+        ? XLSX.utils.json_to_sheet(filas)
+        : XLSX.utils.json_to_sheet([{ 'Sin datos': `No hay registros para ${mes}/${año}` }]);
+      XLSX.utils.book_append_sheet(wb, ws, nombre);
+    };
+
+    addSheet('✅ Clase 1 - Firmaron',     filas1);
+    addSheet('📋 Clase 2 - Sin contratar', filas2);
+    addSheet('💬 Clase 3 - Solo mensajes', filas3);
+
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const fileName = `lumux_leads_${año}_${String(mes).padStart(2,'0')}.xlsx`;
+
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+
+    console.log(`[Admin] Excel exportado: ${fileName} — C1:${filas1.length} C2:${filas2.length} C3:${filas3.length}`);
+
+  } catch (error) {
+    console.error('[Admin] Error exportando leads:', error);
     res.status(500).json({ ok: false, error: error.message });
   }
 });
