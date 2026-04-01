@@ -4,6 +4,7 @@ const axios = require('axios');
 const FormData = require('form-data');
 // Email via Resend API
 const db = require('./db');
+const meta = require('./meta');
 const {
   responderMensaje, analizarFactura, generarComparativa, generarUrlInforme,
   generarResumenHistorial, analizarFacturaGas, generarComparativaGas
@@ -267,6 +268,10 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     const oferta = await db.crearOferta(usuario.id, factura.id, comparativa.tarifa.id, comparativa.ahorro, urlCorta);
     await db.supabase.from('informes').update({ oferta_id: oferta.id }).eq('id', informeGuardado.id);
     await db.programarRemarketing(usuario.id, oferta.id, 3, 'seguimiento_oferta');
+
+    // ─── META CAPI: Lead ──────────────────────────────────────────────────────
+    meta.enviarLead({ telefono, ahorro: comparativa.ahorro * 12 }).catch(() => {});
+    // ─────────────────────────────────────────────────────────────────────────
 
     try {
       await enviarPlantillaInforme(
@@ -533,6 +538,15 @@ router.post('/contrato', async (req, res) => {
       }
 
       await db.actualizarEstado(informeData.usuario_id, 'contratado');
+
+      // ─── META CAPI: Purchase (conversión real) ────────────────────────────
+      meta.enviarPurchase({
+        telefono: informeData.telefono,
+        email,
+        ahorroAnual: ahorro_anual,
+        compania:    nueva_compania,
+      }).catch(() => {});
+      // ─────────────────────────────────────────────────────────────────────
 
       // Nota en historial → bot sabrá del contrato en futuras conversaciones
       const cupsNota = propiedadData?.cups || informeData?.cups || 'no disponible';
