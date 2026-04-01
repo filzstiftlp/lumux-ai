@@ -186,6 +186,17 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
   // Guardar/actualizar propiedad con el CUPS
   const propiedadId = await db.upsertPropiedad(usuario.id, cups);
 
+  // Nombre real: prioridad factura → WhatsApp
+  const nombreTitular = datosFactura.nombre_titular || usuario.nombre || null;
+  const dniTitular    = datosFactura.dni_titular    || null;
+
+  // Actualizar nombre del usuario si la factura tiene uno más completo
+  if (datosFactura.nombre_titular && datosFactura.nombre_titular !== usuario.nombre) {
+    await db.supabase.from('usuarios')
+      .update({ nombre: datosFactura.nombre_titular })
+      .eq('id', usuario.id);
+  }
+
   // ─── GUARDAR FACTURA ─────────────────────────────────────────────────────
   const factura = await db.guardarFactura(usuario.id, {
     propiedad_id:     propiedadId,
@@ -235,7 +246,8 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     const informeGuardado = await db.guardarInforme({
       usuario_id:        usuario.id,
       factura_id:        factura.id,
-      nombre:            usuario.nombre,
+      nombre:            nombreTitular,
+      dni:               dniTitular,
       telefono:          telefono,
       cups:              cups,
       compania_actual:   datosFactura.compania,
@@ -275,7 +287,7 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
 
     try {
       await enviarPlantillaInforme(
-        telefono, usuario.nombre, datosFactura.compania,
+        telefono, nombreTitular, datosFactura.compania,
         comparativa.tarifa.compania, comparativa.ahorro, d.pct_ahorro, informeGuardado.short_id
       );
       respuesta = null;
@@ -525,6 +537,7 @@ router.post('/contrato', async (req, res) => {
       await db.supabase.from('titulares').upsert({
         usuario_id:      informeData.usuario_id,
         nombre:          nombre || informeData.nombre,
+        dni_cif:         informeData.dni || null,
         email,
         cuenta_bancaria: iban.replace(/\s/g, '').toUpperCase(),
         updated_at:      new Date().toISOString(),
@@ -605,7 +618,8 @@ router.post('/contrato', async (req, res) => {
         <table style="border-collapse:collapse;width:100%;font-size:14px">
           <tr><td colspan="2" style="padding:10px 12px;background:#f0fdf4;font-weight:700;color:#15803d;font-size:12px;letter-spacing:.05em">DATOS DEL TITULAR</td></tr>
           ${r('Nombre titular', nombre || '—')}
-          ${r('Email', email, true)}
+          ${r('DNI / NIF', informeData?.dni || '—', true)}
+          ${r('Email', email)}
           ${r('IBAN', `<span style="font-family:monospace">${iban}</span>`)}
           ${r('Dirección', direccion, true)}
           ${r('CUPS', `<span style="font-family:monospace">${cups}</span>`)}
