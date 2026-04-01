@@ -524,7 +524,8 @@ router.post('/contrato', async (req, res) => {
     if (informeData?.usuario_id) {
       await db.supabase.from('titulares').upsert({
         usuario_id:      informeData.usuario_id,
-        nombre:          nombre || informeData.nombre,
+        nombre:          nombreReal,
+        dni_cif:         informeData.dni || null,
         email,
         cuenta_bancaria: iban.replace(/\s/g, '').toUpperCase(),
         updated_at:      new Date().toISOString(),
@@ -557,7 +558,10 @@ router.post('/contrato', async (req, res) => {
       );
     }
 
-    // ─── 3. Preparar datos del email ──────────────────────────────────────
+    // ─── Nombre real: prioridad factura (informeData) > form > WhatsApp ──────
+    // NUNCA usar el nombre del req.body como fuente principal — puede venir
+    // de un informe anterior o del nombre de WhatsApp, no del titular real.
+    const nombreReal = informeData?.nombre || nombre || '—';
     const cups           = propiedadData?.cups || informeData?.cups || 'No disponible';
     const direccion      = [propiedadData?.direccion, propiedadData?.codigo_postal, propiedadData?.ciudad, propiedadData?.provincia].filter(Boolean).join(', ') || '—';
     const compania_actual = informeData?.compania_actual || facturaData?.compania || '—';
@@ -596,7 +600,7 @@ router.post('/contrato', async (req, res) => {
       from: 'Lumux AI <ceo@lumux.es>',
       to:   [emailDestino],
       cc:   process.env.SMTP_USER ? [process.env.SMTP_USER] : [],
-      subject: `CONTRATO LUMUX · ${nueva_compania} · ${nombre || 'Cliente'} · CUPS: ${cups}`,
+      subject: `CONTRATO LUMUX · ${nueva_compania} · ${nombreReal} · CUPS: ${cups}`,
       html: `<div style="font-family:sans-serif;max-width:640px;margin:0 auto">
         <div style="background:#1e1b2a;padding:20px 24px;border-radius:8px 8px 0 0">
           <h2 style="margin:0;color:#fff;font-size:18px">⚡ Nueva solicitud de contratación · Lumux AI</h2>
@@ -604,7 +608,7 @@ router.post('/contrato', async (req, res) => {
         </div>
         <table style="border-collapse:collapse;width:100%;font-size:14px">
           <tr><td colspan="2" style="padding:10px 12px;background:#f0fdf4;font-weight:700;color:#15803d;font-size:12px;letter-spacing:.05em">DATOS DEL TITULAR</td></tr>
-          ${r('Nombre titular', nombre || '—')}
+          ${r('Nombre titular', nombreReal)}
           ${r('Email', email, true)}
           ${r('IBAN', `<span style="font-family:monospace">${iban}</span>`)}
           ${r('Dirección', direccion, true)}
@@ -644,7 +648,7 @@ router.post('/contrato', async (req, res) => {
     const telefonoCliente = informeData?.telefono;
     if (telefonoCliente) {
       try {
-        const nombreCorto = (nombre || '').split(' ')[0] || '';
+        const nombreCorto = (nombreReal).split(' ')[0] || '';
         await enviarMensajeWhatsApp(
           telefonoCliente,
           `✅ ¡Todo listo${nombreCorto ? ', ' + nombreCorto : ''}! Hemos enviado tu solicitud de cambio a ${nueva_compania}.\n\nRecibirás el contrato para firmar en menos de 24h en ${email}.\n\n¿Tienes alguna duda? Escríbenos aquí mismo 💬`
@@ -663,13 +667,9 @@ router.post('/contrato', async (req, res) => {
   }
 });
 
-
 // ─── /admin/exportar-leads ────────────────────────────────────────────────────
-// Genera un Excel mensual con 3 hojas: Clase1 (firmaron), Clase2 (factura sin contrato), Clase3 (solo mensajes)
-// Protegido con ADMIN_SECRET para que no sea público
 router.get('/admin/exportar-leads', async (req, res) => {
   try {
-    // Protección básica por token
     const secret = req.query.secret || req.headers['x-admin-secret'];
     if (secret !== process.env.ADMIN_SECRET) {
       return res.status(401).json({ ok: false, error: 'No autorizado' });
@@ -677,113 +677,103 @@ router.get('/admin/exportar-leads', async (req, res) => {
 
     const XLSX = require('xlsx');
 
-    // ─── Rango de fechas (por defecto: mes actual) ─────────────────────────
     const ahora = new Date();
     const año   = parseInt(req.query.año  || ahora.getFullYear());
-    const mes   = parseInt(req.query.mes  || ahora.getMonth() + 1); // 1-12
+    const mes   = parseInt(req.query.mes  || (ahora.getMonth() + 1));
     const desde = new Date(año, mes - 1, 1).toISOString();
-    const hasta = new Date(año, mes, 1).toISOString();
+    const hasta = new Date(año, mes, 0, 23, 59, 59).toISOString(); // último día del mes
 
-    // ─── CLASE 1: Contrataciones firmadas ─────────────────────────────────
-    const { data: clase1 } = await db.supabase
+    // ─── CLASE 1: Ofertas firmadas en el periodo ──────────────────────────
+    // Buscamos primero las ofertas firmadas en el mes
+    const { data: ofertasFirmadas } = await db.supabase
       .from('ofertas')
-      .select(`
-        fecha_firmado,
-        ahorro_estimado,
-        tarifas(compania, nombre_tarifa),
-        facturas(compania, consumo_kwh, potencia_kw, precio_total, cups, fecha_factura),
-        usuarios(nombre, telefono, estado),
-        informes(nombre, telefono, dni, cups, nueva_compania, ahorro_anual, pct_ahorro)
-      `)
+      .select('id, fecha_firmado, ahorro_estimado, tarifas(compania, nombre_tarifa)')
       .eq('estado', 'firmada')
       .gte('fecha_firmado', desde)
-      .lt('fecha_firmado', hasta)
-      .order('fecha_firmado', { ascending: false });
+      .lte('fecha_firmado', hasta);
 
-    const { data: titulares } = await db.supabase
-      .from('titulares')
-      .select('usuario_id, email, cuenta_bancaria, dni_cif');
-    const titularMap = {};
-    (titulares || []).forEach(t => { titularMap[t.usuario_id] = t; });
+    const ofertaIds = (ofertasFirmadas || []).map(o => o.id);
+    const ofertaMap = {};
+    (ofertasFirmadas || []).forEach(o => { ofertaMap[o.id] = o; });
 
-    const filas1 = (clase1 || []).map(o => {
-      const inf = Array.isArray(o.informes) ? o.informes[0] : o.informes;
-      const fac = Array.isArray(o.facturas) ? o.facturas[0] : o.facturas;
-      const usu = Array.isArray(o.usuarios) ? o.usuarios[0] : o.usuarios;
-      const tar = Array.isArray(o.tarifas)  ? o.tarifas[0]  : o.tarifas;
-      const tit = titularMap[usu?.id] || {};
+    // Luego los informes ligados a esas ofertas
+    const { data: informesFirmados } = ofertaIds.length > 0
+      ? await db.supabase
+          .from('informes')
+          .select('nombre, telefono, dni, cups, compania_actual, nueva_compania, nueva_tarifa, consumo_kwh, potencia_kw, precio_actual_mes, ahorro_anual, pct_ahorro, usuario_id, oferta_id')
+          .in('oferta_id', ofertaIds)
+      : { data: [] };
+
+    const { data: todosLosTitulares } = await db.supabase
+      .from('titulares').select('usuario_id, email, cuenta_bancaria, dni_cif');
+    const titMap = {};
+    (todosLosTitulares || []).forEach(t => { titMap[t.usuario_id] = t; });
+
+    const filas1 = (informesFirmados || []).map(inf => {
+      const firma = ofertaMap[inf.oferta_id] || {};
+      const tar   = Array.isArray(firma.tarifas) ? firma.tarifas[0] : firma.tarifas;
+      const tit   = titMap[inf.usuario_id] || {};
       return {
-        'Fecha firma':        o.fecha_firmado ? new Date(o.fecha_firmado).toLocaleDateString('es-ES') : '—',
-        'Nombre titular':     inf?.nombre || usu?.nombre || '—',
-        'DNI / NIF':          inf?.dni    || tit?.dni_cif || '—',
-        'Teléfono':           inf?.telefono || usu?.telefono || '—',
-        'Email':              tit?.email || '—',
-        'IBAN':               tit?.cuenta_bancaria || '—',
-        'CUPS':               inf?.cups || fac?.cups || '—',
-        'Compañía actual':    fac?.compania || '—',
-        'Nueva compañía':     inf?.nueva_compania || tar?.compania || '—',
-        'Nueva tarifa':       tar?.nombre_tarifa || '—',
-        'Consumo kWh':        fac?.consumo_kwh || '—',
-        'Potencia kW':        fac?.potencia_kw || '—',
-        'Importe factura €':  fac?.precio_total || '—',
-        'Ahorro anual €':     inf?.ahorro_anual || o.ahorro_estimado || '—',
-        'Ahorro %':           inf?.pct_ahorro || '—',
+        'Fecha firma':          firma.fecha_firmado ? new Date(firma.fecha_firmado).toLocaleDateString('es-ES') : '—',
+        'Nombre titular':       inf.nombre || '—',
+        'DNI / NIF':            inf.dni || tit.dni_cif || '—',
+        'Teléfono':             inf.telefono || '—',
+        'Email':                tit.email || '—',
+        'IBAN':                 tit.cuenta_bancaria || '—',
+        'CUPS':                 inf.cups || '—',
+        'Compañía actual':      inf.compania_actual || '—',
+        'Nueva compañía':       inf.nueva_compania || tar?.compania || '—',
+        'Nueva tarifa':         inf.nueva_tarifa || tar?.nombre_tarifa || '—',
+        'Consumo kWh':          inf.consumo_kwh || '—',
+        'Potencia kW':          inf.potencia_kw || '—',
+        'Factura actual €/mes': inf.precio_actual_mes || '—',
+        'Ahorro anual €':       inf.ahorro_anual || firma.ahorro_estimado || '—',
+        'Ahorro %':             inf.pct_ahorro || '—',
       };
     });
 
-    // ─── CLASE 2: Enviaron factura, NO firmaron ────────────────────────────
-    const { data: clase2raw } = await db.supabase
+    // ─── CLASE 2: Informes del mes sin contrato firmado ────────────────────
+    const { data: informesMes } = await db.supabase
       .from('informes')
-      .select(`
-        nombre, telefono, dni, cups, compania_actual, nueva_compania,
-        consumo_kwh, potencia_kw, precio_actual_mes, ahorro_anual, pct_ahorro,
-        created_at, visto, fecha_visto,
-        ofertas(estado)
-      `)
+      .select('nombre, telefono, dni, cups, compania_actual, nueva_compania, consumo_kwh, potencia_kw, precio_actual_mes, ahorro_anual, pct_ahorro, created_at, visto, fecha_visto, oferta_id')
       .gte('created_at', desde)
-      .lt('created_at', hasta)
+      .lte('created_at', hasta)
       .order('created_at', { ascending: false });
 
-    // Excluir los que firmaron
-    const filas2 = (clase2raw || [])
-      .filter(inf => {
-        const oferta = Array.isArray(inf.ofertas) ? inf.ofertas[0] : inf.ofertas;
-        return !oferta || oferta.estado !== 'firmada';
-      })
+    const idsOfertasFirmadas = new Set(ofertaIds);
+    const filas2 = (informesMes || [])
+      .filter(inf => !inf.oferta_id || !idsOfertasFirmadas.has(inf.oferta_id))
       .map(inf => ({
-        'Fecha análisis':     new Date(inf.created_at).toLocaleDateString('es-ES'),
-        'Nombre':             inf.nombre || '—',
-        'DNI / NIF':          inf.dni || '—',
-        'Teléfono':           inf.telefono || '—',
-        'CUPS':               inf.cups || '—',
-        'Compañía actual':    inf.compania_actual || '—',
-        'Mejor oferta':       inf.nueva_compania || '—',
-        'Consumo kWh':        inf.consumo_kwh || '—',
-        'Potencia kW':        inf.potencia_kw || '—',
+        'Fecha análisis':       new Date(inf.created_at).toLocaleDateString('es-ES'),
+        'Nombre':               inf.nombre || '—',
+        'DNI / NIF':            inf.dni || '—',
+        'Teléfono':             inf.telefono || '—',
+        'CUPS':                 inf.cups || '—',
+        'Compañía actual':      inf.compania_actual || '—',
+        'Mejor oferta':         inf.nueva_compania || '—',
+        'Consumo kWh':          inf.consumo_kwh || '—',
+        'Potencia kW':          inf.potencia_kw || '—',
         'Factura actual €/mes': inf.precio_actual_mes || '—',
-        'Ahorro anual €':     inf.ahorro_anual || '—',
-        'Ahorro %':           inf.pct_ahorro || '—',
-        'Vio el informe':     inf.visto ? 'Sí' : 'No',
-        'Fecha visto':        inf.fecha_visto ? new Date(inf.fecha_visto).toLocaleDateString('es-ES') : '—',
+        'Ahorro anual €':       inf.ahorro_anual || '—',
+        'Ahorro %':             inf.pct_ahorro || '—',
+        'Vio el informe':       inf.visto ? 'Sí' : 'No',
+        'Fecha visto':          inf.fecha_visto ? new Date(inf.fecha_visto).toLocaleDateString('es-ES') : '—',
       }));
 
-    // ─── CLASE 3: Solo mensajes, nunca enviaron factura ───────────────────
-    const { data: todosUsuarios } = await db.supabase
+    // ─── CLASE 3: Solo mensajes, sin factura ──────────────────────────────
+    const { data: usuariosMes } = await db.supabase
       .from('usuarios')
       .select('id, nombre, telefono, estado, created_at')
       .gte('created_at', desde)
-      .lt('created_at', hasta)
+      .lte('created_at', hasta)
       .order('created_at', { ascending: false });
 
-    // IDs que sí tienen factura
-    const { data: usuariosConFactura } = await db.supabase
-      .from('facturas')
-      .select('usuario_id')
-      .gte('created_at', desde)
-      .lt('created_at', hasta);
-    const idsConFactura = new Set((usuariosConFactura || []).map(f => f.usuario_id));
+    const { data: facturasMes } = await db.supabase
+      .from('facturas').select('usuario_id')
+      .gte('created_at', desde).lte('created_at', hasta);
+    const idsConFactura = new Set((facturasMes || []).map(f => f.usuario_id));
 
-    const filas3 = (todosUsuarios || [])
+    const filas3 = (usuariosMes || [])
       .filter(u => !idsConFactura.has(u.id))
       .map(u => ({
         'Fecha entrada':  new Date(u.created_at).toLocaleDateString('es-ES'),
@@ -794,17 +784,12 @@ router.get('/admin/exportar-leads', async (req, res) => {
 
     // ─── Generar Excel ─────────────────────────────────────────────────────
     const wb = XLSX.utils.book_new();
+    const toSheet = (filas, fallback) =>
+      XLSX.utils.json_to_sheet(filas.length > 0 ? filas : [{ 'Sin datos': fallback }]);
 
-    const addSheet = (nombre, filas, color) => {
-      const ws = filas.length > 0
-        ? XLSX.utils.json_to_sheet(filas)
-        : XLSX.utils.json_to_sheet([{ 'Sin datos': `No hay registros para ${mes}/${año}` }]);
-      XLSX.utils.book_append_sheet(wb, ws, nombre);
-    };
-
-    addSheet('✅ Clase 1 - Firmaron',     filas1);
-    addSheet('📋 Clase 2 - Sin contratar', filas2);
-    addSheet('💬 Clase 3 - Solo mensajes', filas3);
+    XLSX.utils.book_append_sheet(wb, toSheet(filas1, `Sin firmas en ${mes}/${año}`), '✅ Clase1-Firmaron');
+    XLSX.utils.book_append_sheet(wb, toSheet(filas2, `Sin leads en ${mes}/${año}`), '📋 Clase2-SinContratar');
+    XLSX.utils.book_append_sheet(wb, toSheet(filas3, `Sin mensajes en ${mes}/${año}`), '💬 Clase3-SoloMensajes');
 
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     const fileName = `lumux_leads_${año}_${String(mes).padStart(2,'0')}.xlsx`;
@@ -812,8 +797,7 @@ router.get('/admin/exportar-leads', async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buffer);
-
-    console.log(`[Admin] Excel exportado: ${fileName} — C1:${filas1.length} C2:${filas2.length} C3:${filas3.length}`);
+    console.log(`[Admin] Excel: ${fileName} C1:${filas1.length} C2:${filas2.length} C3:${filas3.length}`);
 
   } catch (error) {
     console.error('[Admin] Error exportando leads:', error);
