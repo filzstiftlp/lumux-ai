@@ -652,7 +652,22 @@ router.post('/contrato', async (req, res) => {
     console.log(`[Contrato] ✅ Email → ${emailDestino} | factura=${facturaBuffer ? 'adjunta' : 'NO'} | short_id=${short_id}`);
 
     // ─── 6. WhatsApp confirmación al cliente ──────────────────────────────
-    const telefonoCliente = informeData?.telefono;
+    // Fallback: si informe.telefono es null, buscar en usuarios por usuario_id
+    let telefonoCliente = informeData?.telefono;
+    if (!telefonoCliente && informeData?.usuario_id) {
+      try {
+        const { data: usuarioTel } = await db.supabase
+          .from('usuarios')
+          .select('telefono')
+          .eq('id', informeData.usuario_id)
+          .single();
+        if (usuarioTel?.telefono) {
+          telefonoCliente = usuarioTel.telefono;
+          console.log(`[Contrato] Telefono obtenido de usuarios (fallback): ${telefonoCliente}`);
+        }
+      } catch(e) { console.warn('[Contrato] No se pudo obtener telefono de usuarios:', e.message); }
+    }
+    if (!telefonoCliente) console.warn('[Contrato] ⚠️ WA NO enviado: telefono no disponible en informe ni en usuarios');
     if (telefonoCliente) {
       try {
         const nombreCorto = (nombreReal).split(' ')[0] || '';
