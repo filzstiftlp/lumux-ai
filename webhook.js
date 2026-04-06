@@ -456,6 +456,12 @@ router.post('/contrato', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Faltan datos obligatorios' });
     }
 
+    // ─── RESPONDER AL CLIENTE INMEDIATAMENTE (antes de cualquier I/O) ─────
+    res.json({ ok: true });
+
+    // ─── TODO EN BACKGROUND: queries, descarga factura, BD, email, WA ────────
+    setImmediate(async () => { try {
+
     // ─── 1. Obtener informe completo + factura + propiedad ────────────────
     let informeData = null;
     let facturaData = null;
@@ -552,13 +558,7 @@ router.post('/contrato', async (req, res) => {
       );
     }
 
-    // ─── RESPONDER AL CLIENTE INMEDIATAMENTE ─────────────────────────────────
-    // El cliente ve "solicitud enviada" de inmediato. Email y WA van en background.
-    res.json({ ok: true });
-
-    // ─── BACKGROUND: email + WhatsApp + Meta CAPI ────────────────────────────
-    setImmediate(async () => {
-      try {
+    // ─── BACKGROUND: email + WhatsApp + Meta CAPI (continuación del setImmediate) ─
 
       // ─── META CAPI: Purchase ──────────────────────────────────────────────
       meta.enviarPurchase({
@@ -652,22 +652,18 @@ router.post('/contrato', async (req, res) => {
     console.log(`[Contrato] ✅ Email → ${emailDestino} | factura=${facturaBuffer ? 'adjunta' : 'NO'} | short_id=${short_id}`);
 
     // ─── 6. WhatsApp confirmación al cliente ──────────────────────────────
-    // Fallback: si informe.telefono es null, buscar en usuarios por usuario_id
     let telefonoCliente = informeData?.telefono;
     if (!telefonoCliente && informeData?.usuario_id) {
       try {
         const { data: usuarioTel } = await db.supabase
-          .from('usuarios')
-          .select('telefono')
-          .eq('id', informeData.usuario_id)
-          .single();
+          .from('usuarios').select('telefono').eq('id', informeData.usuario_id).single();
         if (usuarioTel?.telefono) {
           telefonoCliente = usuarioTel.telefono;
-          console.log(`[Contrato] Telefono obtenido de usuarios (fallback): ${telefonoCliente}`);
+          console.log(`[Contrato] Telefono fallback de usuarios: ${telefonoCliente}`);
         }
-      } catch(e) { console.warn('[Contrato] No se pudo obtener telefono de usuarios:', e.message); }
+      } catch(e) { console.warn('[Contrato] Telefono fallback error:', e.message); }
     }
-    if (!telefonoCliente) console.warn('[Contrato] ⚠️ WA NO enviado: telefono no disponible en informe ni en usuarios');
+    if (!telefonoCliente) console.warn('[Contrato] ⚠️ WA NO enviado: telefono no disponible');
     if (telefonoCliente) {
       try {
         const nombreCorto = (nombreReal).split(' ')[0] || '';
@@ -682,7 +678,7 @@ router.post('/contrato', async (req, res) => {
       } catch(bgErr) {
         console.error('[Contrato] Error en background (email/WA/Meta):', bgErr.message);
       }
-    }); // fin setImmediate
+    }); // fin setImmediate (background)
 
   } catch (error) {
     console.error('[Contrato] Error:', error);
