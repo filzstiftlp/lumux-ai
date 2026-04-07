@@ -4,7 +4,8 @@ const axios = require('axios');
 const FormData = require('form-data');
 // Email via Resend API
 const db = require('./db');
-const meta = require('./meta');
+const meta   = require('./meta');
+const tiktok = require('./tiktok');
 const {
   responderMensaje, analizarFactura, generarComparativa, generarUrlInforme,
   generarResumenHistorial, analizarFacturaGas, generarComparativaGas
@@ -272,6 +273,8 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
 
     // ─── META CAPI: Lead ──────────────────────────────────────────────────────
     meta.enviarLead({ telefono, ahorro: comparativa.ahorro * 12 }).catch(() => {});
+    // ─── TIKTOK CAPI: Lead ────────────────────────────────────────────────────
+    tiktok.enviarLead({ telefono, ahorro: comparativa.ahorro * 12 }).catch(() => {});
     // ─────────────────────────────────────────────────────────────────────────
 
     try {
@@ -562,6 +565,13 @@ router.post('/contrato', async (req, res) => {
 
       // ─── META CAPI: Purchase ──────────────────────────────────────────────
       meta.enviarPurchase({
+        telefono: informeData?.telefono,
+        email,
+        ahorroAnual: ahorro_anual,
+        compania:    nueva_compania,
+      }).catch(() => {});
+      // ─── TIKTOK CAPI: Purchase ────────────────────────────────────────────
+      tiktok.enviarPurchase({
         telefono: informeData?.telefono,
         email,
         ahorroAnual: ahorro_anual,
