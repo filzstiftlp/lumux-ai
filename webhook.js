@@ -11,6 +11,66 @@ const {
   generarResumenHistorial, analizarFacturaGas, generarComparativaGas
 } = require('./claude');
 
+
+// ─── SISTEMA DE RECORDATORIOS ─────────────────────────────────────────────────
+// Mapas en memoria para recordatorios activos por teléfono
+// { telefono: timeoutId }
+const recuerdoFactura  = new Map(); // recordatorio 10min "no enviaste la factura"
+const recuerdoContratar = new Map(); // recordatorio 15min "tienes un ahorro pendiente"
+
+function cancelarRecordatorios(telefono) {
+  if (recuerdoFactura.has(telefono)) {
+    clearTimeout(recuerdoFactura.get(telefono));
+    recuerdoFactura.delete(telefono);
+  }
+  if (recuerdoContratar.has(telefono)) {
+    clearTimeout(recuerdoContratar.get(telefono));
+    recuerdoContratar.delete(telefono);
+  }
+}
+
+function programarRecuerdoFactura(telefono) {
+  // Cancela cualquier recordatorio previo del mismo tipo
+  if (recuerdoFactura.has(telefono)) clearTimeout(recuerdoFactura.get(telefono));
+  const t = setTimeout(async () => {
+    recuerdoFactura.delete(telefono);
+    // Solo enviar si NO ha mandado factura aún (lo comprobamos viendo el historial)
+    try {
+      const { data: usuario } = await db.supabase.from('usuarios').select('id, estado').eq('telefono', telefono).single();
+      if (!usuario) return;
+      // Si ya tiene facturas registradas, no recordar
+      const { data: facturas } = await db.supabase.from('facturas').select('id').eq('usuario_id', usuario.id).limit(1);
+      if (facturas && facturas.length > 0) return;
+      await enviarMensajeWhatsApp(
+        telefono,
+        '\uD83D\uDC4B \u00A1Oye, que a\u00FAn no me has mandado tu factura! \uD83D\uDE04\n\nEnv\u00EDamela ahora y en segundos te digo cu\u00E1nto puedes ahorrar. Es gratis y sin compromiso. \u26A1'
+      );
+      console.log(`[Recordatorio] Factura → ${telefono}`);
+    } catch(e) { console.error('[Recordatorio] Error factura:', e.message); }
+  }, 10 * 60 * 1000); // 10 minutos
+  recuerdoFactura.set(telefono, t);
+}
+
+function programarRecuerdoContratar(telefono, ahorroAnual, compania) {
+  if (recuerdoContratar.has(telefono)) clearTimeout(recuerdoContratar.get(telefono));
+  const t = setTimeout(async () => {
+    recuerdoContratar.delete(telefono);
+    try {
+      // Solo enviar si no ha firmado aún
+      const { data: usuario } = await db.supabase.from('usuarios').select('id, estado').eq('telefono', telefono).single();
+      if (!usuario || usuario.estado === 'contratado') return;
+      const ahorro = Math.round(ahorroAnual);
+      await enviarMensajeWhatsApp(
+        telefono,
+        `\uD83D\uDCAF \u00A1Recuerda que tienes ${ahorro}\u20AC al a\u00F1o esper\u00E1ndote!\n\nTu informe personalizado con el cambio a *${compania}* sigue disponible. Solo tienes que rellenar tus datos y nosotros gestionamos todo. \uD83D\uDE80\n\n\u00BFQuieres que te lo renv\u00EDe?`
+      );
+      console.log(`[Recordatorio] Contratar → ${telefono}`);
+    } catch(e) { console.error('[Recordatorio] Error contratar:', e.message); }
+  }, 20 * 60 * 1000); // 20 minutos
+  recuerdoContratar.set(telefono, t);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function getChatwootContactId(phone, nombre) {
   try {
     const searchRes = await axios.get(
@@ -275,6 +335,9 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     meta.enviarLead({ telefono, ahorro: comparativa.ahorro * 12 }).catch(() => {});
     // ─── TIKTOK CAPI: Lead ────────────────────────────────────────────────────
     tiktok.enviarLead({ telefono, ahorro: comparativa.ahorro * 12 }).catch(() => {});
+    // ─── RECORDATORIOS: cancelar "manda factura" + programar "contrata" ───────
+    cancelarRecordatorios(telefono);
+    programarRecuerdoContratar(telefono, comparativa.ahorro * 12, comparativa.tarifa?.compania || '');
     // ─────────────────────────────────────────────────────────────────────────
 
     try {
@@ -383,6 +446,7 @@ router.post('/whatsapp', async (req, res) => {
 
     if (tipo === 'imagen' || tipo === 'archivo') {
       await db.guardarMensaje(usuario.id, 'user', '[Factura enviada]', { archivoUrl });
+      cancelarRecordatorios(from); // cancela el recordatorio de "manda tu factura"
       await enviarMensajeWhatsApp(from, '⏳ Estoy analizando tu factura, dame un momento...');
       const imageResponse = await axios.get(archivoUrl, { responseType: 'arraybuffer', headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } });
       const fileBuffer = Buffer.from(imageResponse.data);
@@ -411,6 +475,8 @@ router.post('/whatsapp', async (req, res) => {
       await db.guardarMensaje(usuario.id, 'user', mensajeTexto);
       if (chatwootConvId) await enviarMensajeChatwoot(chatwootConvId, mensajeTexto, false);
       respuesta = await responderMensaje(historial, mensajeTexto);
+      // Recordatorio 10min si no manda factura tras la respuesta del bot
+      programarRecuerdoFactura(from);
     }
 
     // Solo enviar texto si no se usó la plantilla (respuesta === null = plantilla enviada)
@@ -552,6 +618,8 @@ router.post('/contrato', async (req, res) => {
       }
 
       await db.actualizarEstado(informeData.usuario_id, 'contratado');
+      // Cancelar recordatorios pendientes del cliente
+      if (informeData?.telefono) cancelarRecordatorios(informeData.telefono);
 
       const cupsNota = propiedadData?.cups || informeData?.cups || 'no disponible';
       await db.guardarMensaje(

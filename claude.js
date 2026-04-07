@@ -218,7 +218,7 @@ function calcularCosteTarifa(tarifa, consumoTotal, consumoP1, consumoP2, consumo
     descuentoBV = (excedentesKwh * factor) * precioExcedentes;
   }
 
-  return (costeEnergia + costePotencia + (tarifa.precio_fijo_mes || 0) - descuentoBV) * 1.2611;
+  return (costeEnergia + costePotencia + (tarifa.precio_fijo_mes || 0) - descuentoBV) * 1.1563; // IE 5.11% + IVA 10%
 }
 
 async function generarComparativa(datosFactura, tarifas) {
