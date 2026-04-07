@@ -50,6 +50,10 @@ DESPUÉS DE LA CONTRATACIÓN:
 ATENCIÓN TELEFÓNICA:
 - Si el cliente quiere hablar con alguien, dile que puede llamar a este mismo número de WhatsApp.
 
+FORMATO DE RESPUESTA — CRÍTICO:
+- NUNCA pongas asteriscos, negritas ni markdown alrededor de URLs o enlaces. Un enlace debe ir solo, sin ** ni __ ni ningún símbolo. Ejemplo correcto: "https://lumux.es/informe.html?id=xxx". Ejemplo incorrecto: "**https://lumux.es/informe.html?id=xxx**".
+- Los enlaces deben ir siempre en su propia línea, sin ningún símbolo antes ni después.
+
 TEMAS AJENOS:
 - Si el cliente pregunta algo fuera de tu área (matemáticas, recetas, noticias, deportes, política...), respóndele con humor y chispa antes de redirigirle. Nunca seas cortante ni robótico.
 - Ejemplos de tono que puedes adaptar al contexto:
@@ -218,7 +222,7 @@ function calcularCosteTarifa(tarifa, consumoTotal, consumoP1, consumoP2, consumo
     descuentoBV = (excedentesKwh * factor) * precioExcedentes;
   }
 
-  return (costeEnergia + costePotencia + (tarifa.precio_fijo_mes || 0) - descuentoBV) * 1.1563; // IE 5.11% + IVA 10%
+  return (costeEnergia + costePotencia + (tarifa.precio_fijo_mes || 0) - descuentoBV) * 1.2611;
 }
 
 async function generarComparativa(datosFactura, tarifas) {
