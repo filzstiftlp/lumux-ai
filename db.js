@@ -184,6 +184,44 @@ async function verificarBloqueCUPS(cups, usuarioId) {
   return { bloqueado: false };
 }
 
+// ─── HISTORIAL COMPLETO POR TELÉFONO ─────────────────────────────────────────
+// Agrupa contratos e informes de TODOS los usuarios que usan el mismo teléfono
+// (mismo titular, diferentes suministros / titulares familiares)
+async function getContratosYInformesPorTelefono(telefono) {
+  if (!telefono) return { contratos: [], informes: [] };
+
+  // 1. Todos los usuario_id con ese teléfono
+  const { data: usuarios } = await supabase
+    .from('usuarios').select('id').eq('telefono', telefono);
+  if (!usuarios?.length) return { contratos: [], informes: [] };
+  const uids = usuarios.map(u => u.id);
+
+  // 2. Contratos activos (vía propiedades)
+  const { data: propiedades } = await supabase
+    .from('propiedades').select('id, cups, direccion').in('usuario_id', uids);
+  const propIds = (propiedades || []).map(p => p.id);
+
+  let contratos = [];
+  if (propIds.length) {
+    const { data: c } = await supabase
+      .from('contratos')
+      .select('id, compania, estado, fecha_contrato, propiedades(cups, direccion)')
+      .in('propiedad_id', propIds)
+      .order('fecha_contrato', { ascending: false });
+    contratos = c || [];
+  }
+
+  // 3. Informes / ofertas firmadas
+  const { data: informes } = await supabase
+    .from('informes')
+    .select('id, short_id, compania_actual, nueva_compania, nueva_tarifa, ahorro_anual, pct_ahorro, created_at, cups, ofertas(estado, fecha_firmado)')
+    .in('usuario_id', uids)
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  return { contratos: contratos || [], informes: informes || [] };
+}
+
 module.exports = {
   supabase,
   getOrCreateUsuario,
@@ -197,4 +235,5 @@ module.exports = {
   getInformePorShortId,
   upsertPropiedad,
   verificarBloqueCUPS,
+  getContratosYInformesPorTelefono,
 };
