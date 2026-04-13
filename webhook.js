@@ -16,6 +16,68 @@ const {
 const recuerdoFactura   = new Map();
 const recuerdoContratar = new Map();
 
+// ─── TIMERS DE TRASPASO A AGENTE ─────────────────────────────────────────────
+// Timer A: cliente no envió factura tras recordatorio → 3h → pasar a Adrián
+// Timer B: cliente recibió informe pero no firmó      → 3h → pasar a Adrián
+const traspasoSinFactura = new Map();  // telefono → timeoutId
+const traspasoSinFirma   = new Map();  // telefono → timeoutId
+
+const HORAS_SIN_FACTURA = 3;
+const HORAS_SIN_FIRMA   = 3;
+
+function cancelarTraspasos(telefono) {
+  if (traspasoSinFactura.has(telefono)) { clearTimeout(traspasoSinFactura.get(telefono)); traspasoSinFactura.delete(telefono); }
+  if (traspasoSinFirma.has(telefono))   { clearTimeout(traspasoSinFirma.get(telefono));   traspasoSinFirma.delete(telefono); }
+}
+
+function programarTraspasoSinFactura(telefono) {
+  if (traspasoSinFactura.has(telefono)) clearTimeout(traspasoSinFactura.get(telefono));
+  const t = setTimeout(async () => {
+    traspasoSinFactura.delete(telefono);
+    try {
+      const { data: usuarios } = await db.supabase.from('usuarios').select('id').eq('telefono', telefono).limit(1);
+      if (!usuarios?.length) return;
+      const uid = usuarios[0].id;
+      // Verificar que sigue sin factura
+      const { data: facturas } = await db.supabase.from('facturas').select('id').eq('usuario_id', uid).limit(1);
+      if (facturas?.length) return; // ya mandó factura, no traspasar
+      const contactId = await getChatwootContactId(telefono, null);
+      if (!contactId) return;
+      const convId = await getChatwootConversationId(contactId);
+      if (!convId) return;
+      await asignarAAgente(convId);
+      await enviarNotaContextoAgente(convId, telefono, 'sin_factura');
+      await db.supabase.from('usuarios').update({ bot_activo: false, updated_at: new Date().toISOString() }).eq('id', uid);
+      await db.guardarMensaje(uid, 'assistant', '[TRASPASO_AGENTE] Cliente sin factura tras recordatorio. Conversación asignada a agente.', { tipo: 'traspaso_agente', motivo: 'sin_factura' });
+      console.log(`[Traspaso] Sin factura → agente: ${telefono}`);
+    } catch(e) { console.error('[Traspaso] Error sin_factura:', e.message); }
+  }, HORAS_SIN_FACTURA * 60 * 60 * 1000);
+  traspasoSinFactura.set(telefono, t);
+}
+
+function programarTraspasoSinFirma(telefono, convId) {
+  if (traspasoSinFirma.has(telefono)) clearTimeout(traspasoSinFirma.get(telefono));
+  const t = setTimeout(async () => {
+    traspasoSinFirma.delete(telefono);
+    try {
+      const { data: usuarios } = await db.supabase.from('usuarios').select('id, estado').eq('telefono', telefono).limit(1);
+      if (!usuarios?.length) return;
+      const usuario = usuarios[0];
+      if (usuario.estado === 'contratado') return; // ya firmó
+      // Verificar que la conversación no está ya asignada a Adrián
+      const yaAsignada = await convAsignadaAAgente(convId);
+      if (yaAsignada) return;
+      await asignarAAgente(convId);
+      await enviarNotaContextoAgente(convId, telefono, 'sin_firma');
+      await db.supabase.from('usuarios').update({ bot_activo: false, updated_at: new Date().toISOString() }).eq('id', usuario.id);
+      await db.guardarMensaje(usuario.id, 'assistant', '[TRASPASO_AGENTE] Cliente con informe sin firmar. Conversación asignada a agente.', { tipo: 'traspaso_agente', motivo: 'sin_firma' });
+      console.log(`[Traspaso] Sin firma → agente: ${telefono}`);
+    } catch(e) { console.error('[Traspaso] Error sin_firma:', e.message); }
+  }, HORAS_SIN_FIRMA * 60 * 60 * 1000);
+  traspasoSinFirma.set(telefono, t);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function cancelarRecordatorios(telefono) {
   if (recuerdoFactura.has(telefono))   { clearTimeout(recuerdoFactura.get(telefono));   recuerdoFactura.delete(telefono); }
   if (recuerdoContratar.has(telefono)) { clearTimeout(recuerdoContratar.get(telefono)); recuerdoContratar.delete(telefono); }
@@ -61,75 +123,175 @@ Tu informe con el ahorro pasando a *${compania}* sigue disponible. Solo rellena 
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─── CHATWOOT: HELPERS DE CONTACTO / CONVERSACIÓN / ASIGNACIÓN ───────────────
+
 async function getChatwootContactId(phone, nombre) {
   try {
+    const base = { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } };
     const searchRes = await axios.get(
-      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts/search?q=${phone}`,
-      { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
+      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts/search?q=${phone}`, base
     );
     const contacts = searchRes.data?.payload?.contacts || searchRes.data?.payload || [];
     if (contacts.length > 0) return contacts[0].id;
     const createRes = await axios.post(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts`,
-      { name: nombre || phone, phone_number: `+${phone}` },
-      { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
+      { name: nombre || phone, phone_number: `+${phone}` }, base
     );
     return createRes.data?.id || createRes.data?.payload?.id;
   } catch (e) { console.error('Chatwoot contact error:', e.message); return null; }
 }
 
-// Cache del inbox ID para no consultarlo en cada mensaje
 let _chatwootInboxId = null;
 
 async function getWhatsAppInboxId() {
   if (_chatwootInboxId) return _chatwootInboxId;
-  // Si está en variable de entorno, usar esa directamente
-  if (process.env.CHATWOOT_INBOX_ID) {
-    _chatwootInboxId = process.env.CHATWOOT_INBOX_ID;
-    return _chatwootInboxId;
-  }
-  // Auto-detectar: buscar el inbox de tipo whatsapp o api
+  if (process.env.CHATWOOT_INBOX_ID) { _chatwootInboxId = process.env.CHATWOOT_INBOX_ID; return _chatwootInboxId; }
   try {
     const res = await axios.get(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/inboxes`,
       { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
     );
     const inboxes = res.data?.payload || [];
-    console.log('[Chatwoot] Inboxes disponibles:', inboxes.map(i => `${i.id}:${i.channel_type}:${i.name}`));
-    // Buscar primero whatsapp, luego api, luego el primero que haya
-    const wa = inboxes.find(i => i.channel_type === 'Channel::Whatsapp' || i.name?.toLowerCase().includes('whatsapp'));
+    console.log('[Chatwoot] Inboxes:', inboxes.map(i => `${i.id}:${i.channel_type}:${i.name}`));
+    const wa  = inboxes.find(i => i.channel_type === 'Channel::Whatsapp' || i.name?.toLowerCase().includes('whatsapp'));
     const api = inboxes.find(i => i.channel_type === 'Channel::Api');
     const inbox = wa || api || inboxes[0];
-    if (inbox) {
-      _chatwootInboxId = String(inbox.id);
-      console.log(`[Chatwoot] Inbox detectado: ${_chatwootInboxId} (${inbox.name})`);
-      return _chatwootInboxId;
-    }
-  } catch (e) {
-    console.error('[Chatwoot] Error detectando inbox:', e.message);
-  }
-  return '1'; // último fallback
+    if (inbox) { _chatwootInboxId = String(inbox.id); return _chatwootInboxId; }
+  } catch (e) { console.error('[Chatwoot] Error detectando inbox:', e.message); }
+  return '1';
 }
 
 async function getChatwootConversationId(contactId) {
   try {
     const inboxId = await getWhatsAppInboxId();
+    const base = { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } };
     const convsRes = await axios.get(
-      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts/${contactId}/conversations`,
-      { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
+      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts/${contactId}/conversations`, base
     );
     const convs = convsRes.data?.payload || [];
-    // Buscar conversación abierta en el inbox correcto
     const open = convs.find(c => c.status === 'open' && String(c.inbox_id) === String(inboxId));
     if (open) return open.id;
-    // Si no hay abierta, crear nueva
     const createRes = await axios.post(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations`,
-      { inbox_id: parseInt(inboxId), contact_id: contactId },
-      { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
+      { inbox_id: parseInt(inboxId), contact_id: contactId }, base
     );
     return createRes.data?.id || createRes.data?.payload?.id;
   } catch (e) { console.error('Chatwoot conv error:', e.message); return null; }
+}
+
+// Devuelve el assignee actual de una conversación o null
+async function getConvAssignee(convId) {
+  try {
+    const res = await axios.get(
+      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations/${convId}`,
+      { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
+    );
+    return res.data?.meta?.assignee || res.data?.assignee || null;
+  } catch (e) { return null; }
+}
+
+// ¿Está asignada a Adrián? → bot SILENTE. Asignada a Alberto o sin asignar → bot habla.
+async function convAsignadaAAgente(convId) {
+  if (!convId || !process.env.CHATWOOT_ADRIAN_ID) return false;
+  const assignee = await getConvAssignee(convId);
+  if (!assignee) return false;
+  return String(assignee.id) === String(process.env.CHATWOOT_ADRIAN_ID);
+}
+
+// Asignar a Alberto (auditor) — siempre al crear conversación
+async function asignarAAlberto(convId) {
+  if (!convId || !process.env.CHATWOOT_ALBERTO_ID) return;
+  try {
+    await axios.post(
+      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations/${convId}/assignments`,
+      { assignee_id: parseInt(process.env.CHATWOOT_ALBERTO_ID) },
+      { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
+    );
+  } catch (e) { console.error('[Chatwoot] asignarAAlberto error:', e.message); }
+}
+
+// Asignar a Adrián (traspaso comercial) — con auto-provisioning
+async function asignarAAgente(convId) {
+  if (!convId) return;
+  if (!process.env.CHATWOOT_ADRIAN_ID) {
+    const email = process.env.CHATWOOT_ADRIAN_EMAIL || 'adrian@lumux.es';
+    const base  = { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } };
+    try {
+      const list    = await axios.get(`${process.env.CHATWOOT_URL}/api/v1/accounts/1/agents`, base);
+      const agents  = list.data || [];
+      const existing = agents.find(a => a.email === email);
+      if (existing) {
+        process.env.CHATWOOT_ADRIAN_ID = String(existing.id);
+      } else {
+        const pass = process.env.CHATWOOT_ADRIAN_PASS || 'Lumux2025!';
+        const res  = await axios.post(
+          `${process.env.CHATWOOT_URL}/api/v1/accounts/1/agents`,
+          { name: 'Adrián', email, role: 'agent', password: pass, password_confirmation: pass }, base
+        );
+        process.env.CHATWOOT_ADRIAN_ID = String(res.data?.id || res.data?.payload?.id);
+        console.log(`[Chatwoot] Adrián auto-creado id=${process.env.CHATWOOT_ADRIAN_ID}`);
+      }
+    } catch(e) { console.error('[Chatwoot] Auto-provisioning Adrián:', e.message); return; }
+  }
+  try {
+    await axios.post(
+      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations/${convId}/assignments`,
+      { assignee_id: parseInt(process.env.CHATWOOT_ADRIAN_ID) },
+      { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
+    );
+    console.log(`[Chatwoot] Conv ${convId} → Adrián (id=${process.env.CHATWOOT_ADRIAN_ID})`);
+  } catch (e) { console.error('[Chatwoot] asignarAAgente error:', e.message); }
+}
+
+// Nota privada de contexto para Adrián al recibir el traspaso
+async function enviarNotaContextoAgente(convId, telefono, motivo) {
+  if (!convId) return;
+  try {
+    // Buscar datos del usuario y su último informe
+    const { data: usuarios } = await db.supabase
+      .from('usuarios').select('id, nombre, estado').eq('telefono', telefono).limit(1);
+    if (!usuarios?.length) return;
+    const uid = usuarios[0].id;
+
+    const { data: informes } = await db.supabase
+      .from('informes')
+      .select('nombre, compania_actual, nueva_compania, nueva_tarifa, ahorro_anual, pct_ahorro, precio_actual_mes, precio_nuevo_mes, cups, created_at, short_id, ofertas(estado)')
+      .eq('usuario_id', uid)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    const inf = informes?.[0];
+    const motivoTexto = motivo === 'sin_factura'
+      ? '⏰ No envió factura tras recordatorio (3h sin respuesta)'
+      : '⏰ Recibió informe pero no firmó (3h sin contratar)';
+
+    let nota = `📋 *RESUMEN DEL LEAD — TRASPASO AUTOMÁTICO*\n\n`;
+    nota += `*Motivo:* ${motivoTexto}\n`;
+    nota += `*Teléfono:* ${telefono}\n`;
+    nota += `*Nombre:* ${inf?.nombre || usuarios[0].nombre || '—'}\n\n`;
+
+    if (inf) {
+      const urlInforme = `${process.env.WEB_URL || 'https://lumux.es'}/informe.html?id=${inf.short_id}`;
+      nota += `*Compañía actual:* ${inf.compania_actual || '—'}\n`;
+      nota += `*Mejor oferta:* ${inf.nueva_compania} · ${inf.nueva_tarifa || '—'}\n`;
+      nota += `*Factura actual:* ${inf.precio_actual_mes ? `${Number(inf.precio_actual_mes).toFixed(2)}€/mes` : '—'}\n`;
+      nota += `*Con Lumux:* ${inf.precio_nuevo_mes ? `${Number(inf.precio_nuevo_mes).toFixed(2)}€/mes` : '—'}\n`;
+      nota += `*Ahorro:* ${inf.ahorro_anual ? `${Math.round(inf.ahorro_anual)}€/año` : '—'} (${inf.pct_ahorro || '—'}%)\n`;
+      nota += `*CUPS:* ${inf.cups || '—'}\n`;
+      nota += `*Informe:* ${urlInforme}\n`;
+      nota += `\n✅ *Acción:* Contactar al cliente, cerrar la firma y luego *desasignarte* para reactivar el bot.`;
+    } else {
+      nota += `ℹ️ El cliente inició conversación pero no llegó a enviar factura.\n`;
+      nota += `\n✅ *Acción:* Contactar para pedirle la factura, y luego *desasignarte* para reactivar el bot.`;
+    }
+
+    await axios.post(
+      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations/${convId}/messages`,
+      { content: nota, message_type: 'outgoing', private: true },
+      { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
+    );
+    console.log(`[Chatwoot] Nota contexto enviada a conv ${convId}`);
+  } catch(e) { console.error('[Chatwoot] enviarNotaContextoAgente error:', e.message); }
 }
 
 async function enviarMensajeChatwoot(conversationId, mensaje, esBot = false) {
@@ -381,17 +543,46 @@ router.post('/chatwoot', async (req, res) => {
     res.status(200).send('OK');
     const { event, message_type, content, conversation } = req.body;
     const isPrivate = req.body.private === true || req.body.private === 'true';
-    if (event !== 'message_created' || message_type !== 'outgoing' || isPrivate || !content?.trim()) return;
-    const phoneRaw = conversation?.meta?.sender?.phone_number;
-    if (!phoneRaw) return;
-    const phone = phoneRaw.replace(/[\s+\-()]/g, '');
-    await enviarMensajeWhatsApp(phone, content);
-    try {
-      const { data: usuarios } = await db.supabase.from('usuarios').select('id').eq('telefono', phone).limit(1);
-      if (usuarios?.length > 0) await db.guardarMensaje(usuarios[0].id, 'assistant', content, { fuente: 'agente_chatwoot' });
-    } catch (e) { console.error('Chatwoot DB:', e.message); }
-  } catch (error) { console.error('Error chatwoot:', error); }
+    const convId = conversation?.id;
+
+    // ── Evento 1: mensaje saliente del agente → reenviar por WhatsApp ────────
+    if (event === 'message_created' && message_type === 'outgoing' && !isPrivate && content?.trim()) {
+      const phoneRaw = conversation?.meta?.sender?.phone_number;
+      if (phoneRaw) {
+        const phone = phoneRaw.replace(/[\s+\-()]/g, '');
+        await enviarMensajeWhatsApp(phone, content);
+        try {
+          const { data: usuarios } = await db.supabase.from('usuarios').select('id').eq('telefono', phone).limit(1);
+          if (usuarios?.length > 0) await db.guardarMensaje(usuarios[0].id, 'assistant', content, { fuente: 'agente_chatwoot' });
+        } catch (e) { console.error('Chatwoot DB:', e.message); }
+      }
+    }
+
+    // ── Evento 2: conversación actualizada → detectar desasignación ──────────
+    // Cuando el agente desasigna (assignee pasa a null) → reactivar bot
+    if ((event === 'conversation_updated' || event === 'assignment_changed') && convId) {
+      const assignee     = req.body.assignee ?? req.body.meta?.assignee ?? null;
+      const prevAssignee = req.body.meta?.previous_assignee || req.body.previous_assignee || null;
+      const hayDesasignacion = !assignee && prevAssignee;
+
+      if (hayDesasignacion) {
+        const phoneRaw = conversation?.meta?.sender?.phone_number;
+        if (phoneRaw) {
+          const phone = phoneRaw.replace(/[\s+\-()]/g, '');
+          try {
+            await db.supabase.from('usuarios')
+              .update({ bot_activo: true, updated_at: new Date().toISOString() })
+              .eq('telefono', phone);
+            cancelarTraspasos(phone);
+            console.log(`[Bot] Reactivado para ${phone} tras desasignación conv ${convId}`);
+          } catch(e) { console.error('[Bot reactivar] DB error:', e.message); }
+        }
+      }
+    }
+
+  } catch (error) { console.error('Error chatwoot webhook:', error); }
 });
+
 
 // ─── WHATSAPP VERIFICACIÓN ────────────────────────────────────────────────────
 router.get('/whatsapp', (req, res) => {
@@ -424,18 +615,43 @@ router.post('/whatsapp', async (req, res) => {
     else return;
 
     const usuario = await db.getOrCreateUsuario(from, { nombre, telefono: from, canal: 'whatsapp' });
-    const historial = await db.getHistorial(usuario.id);
     let respuesta = '', metadata = {};
 
+    // ─── CHATWOOT: obtener / crear conversación y asignar a Alberto ──────────
     let chatwootConvId = null;
     if (process.env.CHATWOOT_URL && process.env.CHATWOOT_API_TOKEN) {
       const contactId = await getChatwootContactId(from, nombre);
-      if (contactId) chatwootConvId = await getChatwootConversationId(contactId);
+      if (contactId) {
+        chatwootConvId = await getChatwootConversationId(contactId);
+        // Asignar a Alberto (auditor) si no está ya asignado a nadie o a él mismo
+        await asignarAAlberto(chatwootConvId);
+      }
     }
+
+    // ─── GUARDIA: si la conversación está asignada a Adrián → bot SILENTE ───
+    // Solo registramos el mensaje en BD para contexto, no respondemos nada
+    if (chatwootConvId && await convAsignadaAAgente(chatwootConvId)) {
+      const textoLog = tipo !== 'texto' ? '[Archivo enviado mientras bot silente]' : mensajeTexto;
+      await db.guardarMensaje(usuario.id, 'user', textoLog, { fuente: 'bot_silente' });
+      if (chatwootConvId && tipo !== 'texto') {
+        try {
+          const imageResponse = await axios.get(archivoUrl, { responseType: 'arraybuffer', headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } });
+          await enviarArchivoChatwoot(chatwootConvId, Buffer.from(imageResponse.data), fileName, mediaType);
+        } catch(e) { /* silencioso */ }
+      } else if (chatwootConvId) {
+        await enviarMensajeChatwoot(chatwootConvId, mensajeTexto, false);
+      }
+      console.log(`[Bot silente] ${from} asignado a Adrián, mensaje ignorado por bot`);
+      return;
+    }
+
+    // ─── BOT ACTIVO: procesar mensaje ────────────────────────────────────────
+    const historial = await db.getHistorial(usuario.id);
 
     if (tipo === 'imagen' || tipo === 'archivo') {
       await db.guardarMensaje(usuario.id, 'user', '[Factura enviada]', { archivoUrl });
       cancelarRecordatorios(from);
+      cancelarTraspasos(from); // cliente activo, cancelar timers de traspaso
       await enviarMensajeWhatsApp(from, '⏳ Estoy analizando tu factura, dame un momento...');
       const imageResponse = await axios.get(archivoUrl, { responseType: 'arraybuffer', headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } });
       const fileBuffer = Buffer.from(imageResponse.data);
@@ -463,19 +679,26 @@ router.post('/whatsapp', async (req, res) => {
     } else {
       await db.guardarMensaje(usuario.id, 'user', mensajeTexto);
       if (chatwootConvId) await enviarMensajeChatwoot(chatwootConvId, mensajeTexto, false);
+      // Cualquier actividad del cliente reinicia el timer de traspaso sin factura
+      cancelarTraspasos(from);
       respuesta = await responderMensaje(historial, mensajeTexto);
-      programarRecuerdoFactura(from); // 10min si no manda factura
+      programarRecuerdoFactura(from); // recordatorio 10min
+      programarTraspasoSinFactura(from); // traspaso 3h si sigue sin factura
     }
 
-    // Solo enviar texto si no se usó la plantilla (respuesta === null = plantilla enviada)
+    // ─── Enviar respuesta del bot ─────────────────────────────────────────────
     if (respuesta) {
       await db.guardarMensaje(usuario.id, 'assistant', respuesta, metadata);
       await enviarMensajeWhatsApp(from, respuesta);
       if (chatwootConvId) await enviarMensajeChatwoot(chatwootConvId, respuesta, true);
     } else {
+      // respuesta === null → plantilla de informe enviada
       const nota = `📊 Informe enviado con botón | ID: ${metadata.short_id} | URL: ${metadata.url_informe}`;
       await db.guardarMensaje(usuario.id, 'assistant', nota, metadata);
       if (chatwootConvId) await enviarMensajeChatwoot(chatwootConvId, nota, true);
+      // ─── Timer B: si no firma en 3h → pasar a Adrián ─────────────────────
+      cancelarTraspasos(from);
+      programarTraspasoSinFirma(from, chatwootConvId);
     }
 
   } catch (error) { console.error('Error WA:', error); }
