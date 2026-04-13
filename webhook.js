@@ -22,8 +22,8 @@ const recuerdoContratar = new Map();
 const traspasoSinFactura = new Map();  // telefono → timeoutId
 const traspasoSinFirma   = new Map();  // telefono → timeoutId
 
-const HORAS_SIN_FACTURA = 3;
-const HORAS_SIN_FIRMA   = 3;
+const HORAS_SIN_FACTURA = 2/60; // TEST: 2 minutos
+const HORAS_SIN_FIRMA   = 2/60; // TEST: 2 minutos
 
 function cancelarTraspasos(telefono) {
   if (traspasoSinFactura.has(telefono)) { clearTimeout(traspasoSinFactura.get(telefono)); traspasoSinFactura.delete(telefono); }
@@ -97,7 +97,7 @@ function programarRecuerdoFactura(telefono) {
       );
       console.log('[Recordatorio] Factura enviado a', telefono);
     } catch(e) { console.error('[Recordatorio] Error factura:', e.message); }
-  }, 10 * 60 * 1000);
+  }, 1 * 60 * 1000); // TEST: 1 minuto
   recuerdoFactura.set(telefono, t);
 }
 
@@ -118,7 +118,7 @@ Tu informe con el ahorro pasando a *${compania}* sigue disponible. Solo rellena 
       );
       console.log('[Recordatorio] Contratar enviado a', telefono);
     } catch(e) { console.error('[Recordatorio] Error contratar:', e.message); }
-  }, 20 * 60 * 1000);
+  }, 2 * 60 * 1000); // TEST: 2 minutos
   recuerdoContratar.set(telefono, t);
 }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -681,7 +681,8 @@ router.post('/whatsapp', async (req, res) => {
       if (chatwootConvId) await enviarMensajeChatwoot(chatwootConvId, mensajeTexto, false);
       // Cualquier actividad del cliente reinicia el timer de traspaso sin factura
       cancelarTraspasos(from);
-      respuesta = await responderMensaje(historial, mensajeTexto);
+      const contratosCtx = await db.getContratosYInformesPorTelefono(from);
+      respuesta = await responderMensaje(historial, mensajeTexto, contratosCtx);
       programarRecuerdoFactura(from); // recordatorio 10min
       programarTraspasoSinFactura(from); // traspaso 3h si sigue sin factura
     }

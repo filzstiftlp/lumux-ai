@@ -63,9 +63,7 @@ TEMAS AJENOS:
 - Siempre remata redirigiendo al envío de la factura.`;
 
 // ─── RESPONDER MENSAJE ────────────────────────────────────────────────────────
-// Inyecta el análisis de factura en el system prompt (no en el historial)
-// para que Claude lo trate como verdad absoluta y no lo cuestione
-async function responderMensaje(historial, mensajeUsuario) {
+async function responderMensaje(historial, mensajeUsuario, contratosCtx = null) {
   let systemPrompt = SYSTEM_PROMPT_BASE;
 
   // Buscar el [ANÁLISIS FACTURA] más reciente e inyectarlo en el system
@@ -75,6 +73,41 @@ async function responderMensaje(historial, mensajeUsuario) {
 
   if (resumenAnalisis) {
     systemPrompt += `\n\nCONTEXTO REAL DE ESTA CONVERSACIÓN (datos ya calculados de la factura real del cliente, úsalos con total seguridad):\n${resumenAnalisis.mensaje}`;
+  }
+
+  // ─── CONTEXTO DE SUMINISTROS CONTRATADOS CON LUMUX ───────────────────────
+  // Incluye TODOS los suministros del teléfono, aunque sean de titulares distintos
+  if (contratosCtx && (contratosCtx.contratos?.length || contratosCtx.informes?.length)) {
+    let ctx = '\n\nSUMINISTROS GESTIONADOS POR LUMUX PARA ESTE TELÉFONO:\n';
+
+    if (contratosCtx.contratos?.length) {
+      ctx += '\nCONTRATOS ACTIVOS:\n';
+      contratosCtx.contratos.forEach((c, i) => {
+        const cups = c.propiedades?.cups || '—';
+        const dir  = c.propiedades?.direccion || '—';
+        ctx += `  ${i+1}. Compañía: ${c.compania} | CUPS: ${cups} | Dirección: ${dir} | Estado: ${c.estado} | Fecha: ${c.fecha_contrato ? new Date(c.fecha_contrato).toLocaleDateString('es-ES') : '—'}\n`;
+      });
+    }
+
+    const informesFirmados = (contratosCtx.informes || []).filter(inf => inf.ofertas?.estado === 'firmada');
+    const informesPendientes = (contratosCtx.informes || []).filter(inf => inf.ofertas?.estado !== 'firmada');
+
+    if (informesFirmados.length) {
+      ctx += '\nCONTRATACIONES EN TRÁMITE (oferta firmada, pendiente de activación):\n';
+      informesFirmados.forEach((inf, i) => {
+        ctx += `  ${i+1}. De ${inf.compania_actual} → ${inf.nueva_compania} (${inf.nueva_tarifa || '—'}) | CUPS: ${inf.cups || '—'} | Ahorro: ${inf.ahorro_anual ? Math.round(inf.ahorro_anual)+'€/año' : '—'} | Firmado: ${inf.ofertas?.fecha_firmado ? new Date(inf.ofertas.fecha_firmado).toLocaleDateString('es-ES') : '—'}\n`;
+      });
+    }
+
+    if (informesPendientes.length) {
+      ctx += '\nINFORMES ENVIADOS SIN FIRMAR AÚN:\n';
+      informesPendientes.slice(0, 3).forEach((inf, i) => {
+        ctx += `  ${i+1}. De ${inf.compania_actual} → ${inf.nueva_compania} | CUPS: ${inf.cups || '—'} | Ahorro: ${inf.ahorro_anual ? Math.round(inf.ahorro_anual)+'€/año' : '—'}\n`;
+      });
+    }
+
+    ctx += '\nIMPORTANTE: Si el cliente pregunta cuántos suministros tiene contratados con Lumux, usa SOLO los datos de arriba. No mezcles datos entre suministros distintos. Cada CUPS es un suministro independiente.';
+    systemPrompt += ctx;
   }
 
   // Contexto temporal de contratacion (trigger 24h firma)
