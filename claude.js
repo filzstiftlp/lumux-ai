@@ -27,6 +27,7 @@ FORMATO DE PRECIOS — MUY IMPORTANTE:
 - NUNCA uses "céntimos/kWh" — confunde al cliente y da sensación de precio alto.
 - Para el ahorro usa siempre €/año y €/mes, no solo porcentajes. Ejemplo: "492€ al año (10% menos)".
 - Si el ahorro parece pequeño en %, arguméntalo en €/año o comparando precios por kWh: "pagas 0.1279 €/kWh vs tu tarifa actual".
+- POTENCIA — CRÍTICO: NUNCA cites el precio unitario €/kW/día de un solo periodo (P1 o P2) porque confunde. Habla siempre del COSTE MENSUAL TOTAL de potencia: "tu potencia con Endesa te cuesta X€/mes" vs "con Naturgy serían Y€/mes". El coste mensual = (precio_kw_p1 × potencia × 30) + (precio_kw_p2 × potencia × 30). Usa ese número total, nunca el precio unitario de un periodo suelto.
 
 PERMANENCIA:
 - Tanto Iberdrola Impulsa 24h como Gana Energía Tarifa Luz Fija 24h son SIN PERMANENCIA.
@@ -548,6 +549,7 @@ function generarResumenHistorial(datosFactura, comparativa) {
     `Tipo tarifa: ${f.tipo_tarifa || '2.0TD'}`,
     `CUPS: ${f.cups || 'no disponible'}`,
     `Potencia contratada: ${f.potencia_kw || 0} kW`,
+    `Coste potencia actual (P1+P2 mes completo): ${f.importe_potencia ? `${f.importe_potencia}€/mes` : 'no disponible'} — usa este importe total al hablar de potencia, NUNCA el precio unitario €/kW/día`,
     `Consumo total: ${f.consumo_kwh || 0} kWh`,
     f.consumo_p1_kwh ? `Consumo P1 (Punta): ${f.consumo_p1_kwh} kWh` : null,
     f.consumo_p2_kwh ? `Consumo P2 (Llano): ${f.consumo_p2_kwh} kWh` : null,
@@ -575,11 +577,17 @@ function generarResumenHistorial(datosFactura, comparativa) {
   const d = comparativa.datosComparativa;
   const t = comparativa.tarifa;
 
+  // Calcular coste potencia nueva tarifa para que el bot lo use directamente
+  const costePotenciaNuevaMes = d.potencia
+    ? (((t.precio_kw_p1 || t.precio_kw || 0) * d.potencia * 30) + ((t.precio_kw_p2 || 0) * d.potencia * 30)).toFixed(2)
+    : null;
+
   const datosComparativaStr = [
     `Precio actual normalizado: ${d.precio_actual_mes}€/mes (${d.precio_actual_anual}€/año)`,
     `Tarifa recomendada: ${t.compania} - ${t.nombre_tarifa}`,
     `Precio nuevo: ${d.precio_nuevo_mes}€/mes (${d.precio_nuevo_anual}€/año)`,
     `Ahorro estimado: ${d.ahorro_anual}€/año (${d.pct_ahorro}% menos)`,
+    costePotenciaNuevaMes ? `Coste potencia nueva tarifa (P1+P2 mes completo): ${costePotenciaNuevaMes}€/mes — usa este total al explicar el ahorro en potencia` : null,
     t.precio_kwh_p1 ? `Nuevo precio P1: ${t.precio_kwh_p1} €/kWh` : null,
     t.precio_kwh_p2 ? `Nuevo precio P2: ${t.precio_kwh_p2} €/kWh` : null,
     t.precio_kwh_p3 ? `Nuevo precio P3: ${t.precio_kwh_p3} €/kWh` : null,
