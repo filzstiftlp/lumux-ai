@@ -270,7 +270,13 @@ async function generarComparativa(datosFactura, tarifas) {
   const consumoP3       = datosFactura.consumo_p3_kwh || 0;
   const potencia        = datosFactura.potencia_kw || 4.4;
   const tieneTriperiodo = consumoP1 > 0 || consumoP2 > 0 || consumoP3 > 0;
-  const costeActualMes  = (datosFactura.precio_total / diasFactura) * 30;
+
+  // ── Coste actual real: lo que el cliente paga de media al mes ──────────────
+  // precio_total ya incluye descuento contractual → es el coste real del cliente
+  // Lo normalizamos a 30 días para comparar igual que las tarifas nuevas
+  const precioTotalReal = datosFactura.precio_total;
+
+  const costeActualMes  = (precioTotalReal / diasFactura) * 30;
 
   const clienteCompania = (datosFactura.compania || '').toLowerCase();
   const args = [consumoTotal, consumoP1, consumoP2, consumoP3, potencia, factor, tieneTriperiodo,
@@ -539,6 +545,8 @@ function generarResumenHistorial(datosFactura, comparativa) {
     `Importe energía: ${f.importe_energia || 0}€`,
     `Importe potencia: ${f.importe_potencia || 0}€`,
     `Total factura (con IVA): ${f.precio_total || 0}€`,
+    f.descuento_energia_pct ? `DESCUENTO CONTRACTUAL ENERGÍA: ${f.descuento_energia_pct}% (descuento permanente de su contrato con ${f.compania}, ya incluido en el total de la factura)` : null,
+    f.descuento_energia_pct ? `Precio efectivo real con descuento: ${f.precio_kwh ? (f.precio_kwh * (1 - f.descuento_energia_pct/100)).toFixed(4) : '—'} €/kWh` : null,
     f.tiene_autoconsumo ? `Autoconsumo: SÍ` : null,
     f.tiene_bateria_virtual ? `Batería virtual: SÍ` : null,
     f.excedentes_kwh ? `Excedentes: ${f.excedentes_kwh} kWh` : null,
