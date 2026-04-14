@@ -587,7 +587,7 @@ function generarResumenHistorial(datosFactura, comparativa) {
     `Tarifa recomendada: ${t.compania} - ${t.nombre_tarifa}`,
     `Precio nuevo: ${d.precio_nuevo_mes}€/mes (${d.precio_nuevo_anual}€/año)`,
     `Ahorro estimado: ${d.ahorro_anual}€/año (${d.pct_ahorro}% menos)`,
-    costePotenciaNuevaMes ? `Coste potencia nueva tarifa (P1+P2 mes completo): ${costePotenciaNuevaMes}€/mes — usa este total al explicar el ahorro en potencia` : null,
+    costePotenciaNuevaMes ? `Coste potencia nueva tarifa (P1+P2 mes completo): ${costePotenciaNuevaMes}€/mes` : null,
     t.precio_kwh_p1 ? `Nuevo precio P1: ${t.precio_kwh_p1} €/kWh` : null,
     t.precio_kwh_p2 ? `Nuevo precio P2: ${t.precio_kwh_p2} €/kWh` : null,
     t.precio_kwh_p3 ? `Nuevo precio P3: ${t.precio_kwh_p3} €/kWh` : null,
@@ -595,7 +595,20 @@ function generarResumenHistorial(datosFactura, comparativa) {
     t.precio_fijo_mes ? `Cuota fija nueva tarifa: ${t.precio_fijo_mes}€/mes` : null,
   ].filter(Boolean).join('. ');
 
-  return `[ANÁLISIS FACTURA] DATOS DE LA FACTURA ACTUAL: ${datosFacturaStr}. COMPARATIVA Y AHORRO: ${datosComparativaStr}. Cálculo basado en datos reales de la factura del cliente.`;
+  // Desglose para que el bot explique el ahorro sin inventar números
+  const potenciaActual = f.importe_potencia ? parseFloat(f.importe_potencia) : null;
+  const potenciaNueva  = costePotenciaNuevaMes ? parseFloat(costePotenciaNuevaMes) : null;
+  const ahorroPotencia = (potenciaActual && potenciaNueva) ? (potenciaActual - potenciaNueva).toFixed(2) : null;
+
+  const desgloseAhorro = [
+    'DESGLOSE AHORRO — USA ESTOS NÚMEROS EXACTOS, NUNCA CALCULES POR TU CUENTA:',
+    potenciaActual ? `• Potencia actual (${f.compania}): ${potenciaActual}€/mes` : null,
+    potenciaNueva  ? `• Potencia nueva (${t.compania}): ${potenciaNueva}€/mes` : null,
+    ahorroPotencia ? `• Ahorro en potencia: ${ahorroPotencia}€/mes` : null,
+    `• Ahorro total (energía + potencia + impuestos): ${(d.ahorro_anual / 12).toFixed(2)}€/mes → ${d.ahorro_anual}€/año`,
+  ].filter(Boolean).join('\n');
+
+  return `[ANÁLISIS FACTURA] DATOS DE LA FACTURA ACTUAL: ${datosFacturaStr}. COMPARATIVA Y AHORRO: ${datosComparativaStr}.\n${desgloseAhorro}\nCálculo basado en datos reales de la factura del cliente.`;
 }
 
 module.exports = {
