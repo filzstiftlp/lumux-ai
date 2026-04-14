@@ -22,8 +22,8 @@ const recuerdoContratar = new Map();
 const traspasoSinFactura = new Map();  // telefono → timeoutId
 const traspasoSinFirma   = new Map();  // telefono → timeoutId
 
-const HORAS_SIN_FACTURA = 2/60; // TEST: 2 minutos
-const HORAS_SIN_FIRMA   = 2/60; // TEST: 2 minutos
+const HORAS_SIN_FACTURA = 3;
+const HORAS_SIN_FIRMA   = 3;
 
 function cancelarTraspasos(telefono) {
   if (traspasoSinFactura.has(telefono)) { clearTimeout(traspasoSinFactura.get(telefono)); traspasoSinFactura.delete(telefono); }
@@ -97,7 +97,7 @@ function programarRecuerdoFactura(telefono) {
       );
       console.log('[Recordatorio] Factura enviado a', telefono);
     } catch(e) { console.error('[Recordatorio] Error factura:', e.message); }
-  }, 1 * 60 * 1000); // TEST: 1 minuto
+  }, 10 * 60 * 1000);
   recuerdoFactura.set(telefono, t);
 }
 
@@ -118,7 +118,7 @@ Tu informe con el ahorro pasando a *${compania}* sigue disponible. Solo rellena 
       );
       console.log('[Recordatorio] Contratar enviado a', telefono);
     } catch(e) { console.error('[Recordatorio] Error contratar:', e.message); }
-  }, 2 * 60 * 1000); // TEST: 2 minutos
+  }, 20 * 60 * 1000);
   recuerdoContratar.set(telefono, t);
 }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -545,6 +545,32 @@ router.post('/chatwoot', async (req, res) => {
     const isPrivate = req.body.private === true || req.body.private === 'true';
     const convId = conversation?.id;
 
+    // ── Evento 0: comandos /bot off|on desde nota privada de Alberto ─────────
+    if (event === 'message_created' && isPrivate && content?.trim()) {
+      const cmd = content.trim().toLowerCase();
+      if (cmd === '/bot off' || cmd === '/bot on') {
+        const phoneRaw = conversation?.meta?.sender?.phone_number;
+        if (phoneRaw) {
+          const phone = phoneRaw.replace(/[\s+\-()]/g, '');
+          const activar = cmd === '/bot on';
+          try {
+            await db.supabase.from('usuarios')
+              .update({ bot_activo: activar, updated_at: new Date().toISOString() })
+              .eq('telefono', phone);
+            if (!activar) { cancelarRecordatorios(phone); cancelarTraspasos(phone); }
+            else { cancelarTraspasos(phone); }
+            await axios.post(
+              `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations/${convId}/messages`,
+              { content: `✅ Bot ${activar ? 'ACTIVADO' : 'SILENCIADO'} para este cliente.`, message_type: 'outgoing', private: true },
+              { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
+            );
+            console.log(`[Bot control] ${phone} → bot_activo=${activar}`);
+          } catch(e) { console.error('[Bot control] error:', e.message); }
+        }
+        return;
+      }
+    }
+
     // ── Evento 1: mensaje saliente del agente → reenviar por WhatsApp ────────
     if (event === 'message_created' && message_type === 'outgoing' && !isPrivate && content?.trim()) {
       const phoneRaw = conversation?.meta?.sender?.phone_number;
@@ -628,9 +654,10 @@ router.post('/whatsapp', async (req, res) => {
       }
     }
 
-    // ─── GUARDIA: si la conversación está asignada a Adrián → bot SILENTE ───
-    // Solo registramos el mensaje en BD para contexto, no respondemos nada
-    if (chatwootConvId && await convAsignadaAAgente(chatwootConvId)) {
+    // ─── GUARDIA: bot silente si está asignado a Adrián O si bot_activo=false ─
+    const botSilente = (chatwootConvId && await convAsignadaAAgente(chatwootConvId)) ||
+                       (usuario.bot_activo === false);
+    if (botSilente) {
       const textoLog = tipo !== 'texto' ? '[Archivo enviado mientras bot silente]' : mensajeTexto;
       await db.guardarMensaje(usuario.id, 'user', textoLog, { fuente: 'bot_silente' });
       if (chatwootConvId && tipo !== 'texto') {

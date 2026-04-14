@@ -187,6 +187,8 @@ CAMPOS REQUERIDOS:
   "importe_energia": importe total en € solo de energía (sin impuestos ni potencia),
   "importe_potencia": importe total en € solo de potencia (sin impuestos),
   "precio_total": ⚠️ CRÍTICO: USA el subtotal de electricidad ANTES de descuentos promocionales temporales. Si la factura muestra líneas separadas como "PARA TI", "Descuento bienvenida", "Dto. fidelización", "Bonificación comercial" u otras FUERA del bloque estándar de Descuentos de tarifa, IGNÓRALAS COMPLETAMENTE. Usa el importe JUSTO antes de esas líneas adicionales. EJEMPLO: si aparece "TOTAL ELECTRICIDAD 46,59€" luego "PARA TI -20,00€" luego "TOTAL A PAGAR 32,37€", entonces precio_total = 46.59 (NO 32.37),
+  "descuento_energia_pct": porcentaje de descuento contractual/fidelización sobre la energía si aparece explícito en la factura (ej: 10 para un "10% DTO" o "Dto. fidelización 10%"). Solo si es un descuento CONTRACTUAL permanente sobre el consumo, NO descuentos puntuales tipo "PARA TI". null si no hay descuento contractual,
+  "importe_energia_sin_descuento": importe de energía ANTES de aplicar descuento_energia_pct (null si no hay descuento contractual),
   "cups": "código CUPS" o null,
   "tiene_autoconsumo": true o false,
   "tiene_bateria_virtual": true o false,
@@ -201,9 +203,10 @@ CAMPOS REQUERIDOS:
 
 REGLAS IMPORTANTES:
 - consumo_kwh: SIEMPRE suma P1+P2+P3 si hay periodos. Ejemplo: 298+205+367 = 870 kWh
-- precio_kwh: DIVIDE importe_energia / consumo_kwh. NO uses precios de líneas individuales
+- precio_kwh: DIVIDE importe_energia / consumo_kwh. Si hay descuento contractual, usa importe_energia_sin_descuento / consumo_kwh para reflejar el precio real de tarifa
+- precio_total: incluye el descuento contractual si lo hay (es el importe real que paga el cliente habitualmente)
 - precio_potencia_dia: es el precio UNITARIO €/kW/día (ej: 0.097), NO el importe total
-- precio_total: USA siempre el subtotal ANTES de descuentos promocionales tipo "PARA TI", "Bienvenida", "Dto. fidelización". Si ves "TOTAL 46,59€" → "PARA TI -20€" → "TOTAL A PAGAR 32,37€", precio_total = 46.59
+- descuento_energia_pct: solo si hay un "X% DTO" o "Dto. fidelización X%" sobre la energía/consumo de forma contractual. La factura de Susana tiene "Descuento promocional 70,59 x -10% DTO" → descuento_energia_pct = 10
 - Si no aparece un dato, pon null`
         }
       ]
