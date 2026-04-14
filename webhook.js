@@ -649,8 +649,14 @@ router.post('/whatsapp', async (req, res) => {
       const contactId = await getChatwootContactId(from, nombre);
       if (contactId) {
         chatwootConvId = await getChatwootConversationId(contactId);
-        // Asignar a Alberto (auditor) si no está ya asignado a nadie o a él mismo
         await asignarAAlberto(chatwootConvId);
+        // ── Registrar el mensaje ENTRANTE del cliente (siempre, sea texto o archivo) ──
+        if (chatwootConvId) {
+          if (tipo === 'texto') {
+            await enviarMensajeChatwoot(chatwootConvId, mensajeTexto, false);
+          }
+          // Los archivos se registran más abajo cuando ya tenemos el buffer descargado
+        }
       }
     }
 
@@ -665,9 +671,8 @@ router.post('/whatsapp', async (req, res) => {
           const imageResponse = await axios.get(archivoUrl, { responseType: 'arraybuffer', headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } });
           await enviarArchivoChatwoot(chatwootConvId, Buffer.from(imageResponse.data), fileName, mediaType);
         } catch(e) { /* silencioso */ }
-      } else if (chatwootConvId) {
-        await enviarMensajeChatwoot(chatwootConvId, mensajeTexto, false);
       }
+      // El mensaje de texto ya se registró en Chatwoot arriba
       console.log(`[Bot silente] ${from} asignado a Adrián, mensaje ignorado por bot`);
       return;
     }
@@ -705,13 +710,12 @@ router.post('/whatsapp', async (req, res) => {
       metadata = resultado.metadata;
     } else {
       await db.guardarMensaje(usuario.id, 'user', mensajeTexto);
-      if (chatwootConvId) await enviarMensajeChatwoot(chatwootConvId, mensajeTexto, false);
-      // Cualquier actividad del cliente reinicia el timer de traspaso sin factura
+      // El mensaje de texto ya se registró en Chatwoot arriba (al crear la conversación)
       cancelarTraspasos(from);
       const contratosCtx = await db.getContratosYInformesPorTelefono(from);
       respuesta = await responderMensaje(historial, mensajeTexto, contratosCtx);
-      programarRecuerdoFactura(from); // recordatorio 10min
-      programarTraspasoSinFactura(from); // traspaso 3h si sigue sin factura
+      programarRecuerdoFactura(from);
+      programarTraspasoSinFactura(from);
     }
 
     // ─── Enviar respuesta del bot ─────────────────────────────────────────────
