@@ -603,17 +603,8 @@ function generarResumenHistorial(datosFactura, comparativa) {
     ? (((t.precio_kw_p1 || t.precio_kw || 0) * d.potencia * 30) + ((t.precio_kw_p2 || 0) * d.potencia * 30)).toFixed(2)
     : null;
 
-  // Coste potencia actual: usar importe_potencia del OCR si está disponible,
-  // si no calcular desde precio_potencia_dia (P1) + precio_potencia_dia_p2 (P2)
-  let potenciaActual = f.importe_potencia ? parseFloat(f.importe_potencia) : null;
-  if (!potenciaActual && f.potencia_kw) {
-    const p1 = f.precio_potencia_dia || 0;
-    const p2 = f.precio_potencia_dia_p2 || 0;
-    const dias = f.dias_facturacion || 30;
-    if (p1 > 0) {
-      potenciaActual = parseFloat(((p1 * f.potencia_kw * dias) + (p2 * f.potencia_kw * dias)).toFixed(2));
-    }
-  }
+  // Coste potencia actual: SOLO usar importe_potencia del OCR, nunca calcular
+  const potenciaActual = f.importe_potencia ? parseFloat(f.importe_potencia) : null;
 
   const datosComparativaStr = [
     `Precio actual normalizado: ${d.precio_actual_mes}€/mes (${d.precio_actual_anual}€/año)`,
