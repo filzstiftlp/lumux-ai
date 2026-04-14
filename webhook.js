@@ -713,7 +713,7 @@ router.post('/whatsapp', async (req, res) => {
       // El mensaje de texto ya se registró en Chatwoot arriba (al crear la conversación)
       cancelarTraspasos(from);
       const contratosCtx = await db.getContratosYInformesPorTelefono(from);
-      respuesta = await responderMensaje(historial, mensajeTexto, contratosCtx);
+      respuesta = await responderMensaje(historial, mensajeTexto, contratosCtx, usuario);
       programarRecuerdoFactura(from);
       programarTraspasoSinFactura(from);
     }

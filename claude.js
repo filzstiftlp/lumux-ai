@@ -79,7 +79,7 @@ NUNCA digas al cliente que "no tiene ahorro" si el informe muestra ahorro real c
 // ─── RESPONDER MENSAJE ────────────────────────────────────────────────────────
 
 // ─── RESPONDER MENSAJE ────────────────────────────────────────────────────────
-async function responderMensaje(historial, mensajeUsuario, contratosCtx = null) {
+async function responderMensaje(historial, mensajeUsuario, contratosCtx = null, usuario = null) {
   let systemPrompt = SYSTEM_PROMPT_BASE;
 
   // Buscar el [ANÁLISIS FACTURA] más reciente e inyectarlo en el system
@@ -88,7 +88,28 @@ async function responderMensaje(historial, mensajeUsuario, contratosCtx = null) 
     .find(m => m.mensaje && m.mensaje.startsWith('[ANÁLISIS FACTURA]'));
 
   if (resumenAnalisis) {
-    systemPrompt += `\n\nCONTEXTO REAL DE ESTA CONVERSACIÓN (datos ya calculados de la factura real del cliente, úsalos con total seguridad):\n${resumenAnalisis.mensaje}`;
+    let resumen = resumenAnalisis.mensaje;
+
+    // Si el resumen no tiene el desglose de potencia (resúmenes antiguos),
+    // intentar enriquecerlo con datos de la factura guardada en BD
+    if (!resumen.includes('DESGLOSE AHORRO') && usuario?.id) {
+      try {
+        const { data: facturas } = await require('./db').supabase
+          .from('facturas')
+          .select('raw_texto_ocr, precio_total, potencia_kw')
+          .eq('usuario_id', usuario.id)
+          .order('created_at', { ascending: false })
+          .limit(1);
+        if (facturas?.[0]?.raw_texto_ocr) {
+          const ocr = JSON.parse(facturas[0].raw_texto_ocr);
+          if (ocr.importe_potencia) {
+            resumen += `\nDESGLOSE AHORRO — USA ESTOS NÚMEROS EXACTOS, NUNCA CALCULES POR TU CUENTA:\n• Potencia actual (${ocr.compania || 'compañía actual'}): ${ocr.importe_potencia}€/mes (dato real de la factura)\n• NUNCA uses ningún otro número para la potencia actual del cliente`;
+          }
+        }
+      } catch(e) { /* silencioso */ }
+    }
+
+    systemPrompt += `\n\nCONTEXTO REAL DE ESTA CONVERSACIÓN (datos ya calculados de la factura real del cliente, úsalos con total seguridad):\n${resumen}`;
   }
 
   // ─── CONTEXTO DE SUMINISTROS CONTRATADOS CON LUMUX ───────────────────────
