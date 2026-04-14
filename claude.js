@@ -579,7 +579,6 @@ function generarResumenHistorial(datosFactura, comparativa) {
     f.precio_kwh_p1 ? `Precio P1: ${f.precio_kwh_p1} €/kWh` : null,
     f.precio_kwh_p2 ? `Precio P2: ${f.precio_kwh_p2} €/kWh` : null,
     f.precio_kwh_p3 ? `Precio P3: ${f.precio_kwh_p3} €/kWh` : null,
-    `Precio potencia: ${f.precio_potencia_dia || 0} €/kW/día`,
     `Importe energía: ${f.importe_energia || 0}€`,
     `Importe potencia: ${f.importe_potencia || 0}€`,
     `Total factura (con IVA): ${f.precio_total || 0}€`,
@@ -615,7 +614,6 @@ function generarResumenHistorial(datosFactura, comparativa) {
     t.precio_kwh_p1 ? `Nuevo precio P1: ${t.precio_kwh_p1} €/kWh` : null,
     t.precio_kwh_p2 ? `Nuevo precio P2: ${t.precio_kwh_p2} €/kWh` : null,
     t.precio_kwh_p3 ? `Nuevo precio P3: ${t.precio_kwh_p3} €/kWh` : null,
-    t.precio_kw_p1 ? `Nueva potencia P1: ${t.precio_kw_p1} €/kW/día` : null,
     t.precio_fijo_mes ? `Cuota fija nueva tarifa: ${t.precio_fijo_mes}€/mes` : null,
   ].filter(Boolean).join('. ');
 
