@@ -74,7 +74,10 @@ Cuando el contexto indique que el cliente tiene un DESCUENTO CONTRACTUAL sobre l
 
 4. ARGUMENTO DE SEGURIDAD: "Los descuentos de fidelización los ponen las compañías para retenerte, pero pueden quitarlos. Con Lumux tienes un precio base competitivo sin letra pequeña."
 
-NUNCA digas al cliente que "no tiene ahorro" si el informe muestra ahorro real calculado sobre su factura completa. Defiende el ahorro con los datos reales.`;
+NUNCA digas al cliente que "no tiene ahorro" si el informe muestra ahorro real calculado sobre su factura completa. Defiende el ahorro con los datos reales.
+
+PROMOCIÓN TARJETA REGALO CARREFOUR — MUY IMPORTANTE:
+Existe una promoción activa para clientes que contratan la tarifa Iberdrola · Impulsa 24h en provincias de Andalucía (Sevilla, Cádiz, Málaga, Córdoba): reciben automáticamente una Tarjeta Regalo Carrefour de 50€ en su domicilio en los días siguientes a activar el cambio. Lumux gestiona el envío sin que el cliente tenga que hacer nada extra. Si un cliente con informe Iberdrola Impulsa pregunta por esta tarjeta (cuándo llega, cómo funciona, si es real, etc.), confirma con seguridad: "Sí, incluido en tu cambio — en cuanto se active la nueva tarifa, Carrefour te envía la tarjeta regalo de 50€ directamente a tu domicilio. No tienes que hacer nada más." No inventes plazos exactos de días salvo que se te indique. Si el cliente pregunta y tú sabes que su informe NO es Iberdrola Impulsa, no menciones esta promoción.`;
 
 // ─── RESPONDER MENSAJE ────────────────────────────────────────────────────────
 
@@ -144,6 +147,18 @@ async function responderMensaje(historial, mensajeUsuario, contratosCtx = null, 
     }
 
     ctx += '\nIMPORTANTE: Si el cliente pregunta cuántos suministros tiene contratados con Lumux, usa SOLO los datos de arriba. No mezcles datos entre suministros distintos. Cada CUPS es un suministro independiente.';
+
+    // Detectar promoción Carrefour en los informes del cliente
+    const todosInformes = [...(contratosCtx.informes || [])];
+    const tieneCarrefour = todosInformes.some(inf => {
+      const comp = (inf.nueva_compania || '').toLowerCase();
+      const tar  = (inf.nueva_tarifa  || '').toLowerCase();
+      return comp.includes('iberdrola') && tar.includes('impulsa');
+    });
+    if (tieneCarrefour) {
+      ctx += '\n\nPROMOCIÓN ACTIVA PARA ESTE CLIENTE: Su informe incluye la tarifa Iberdrola · Impulsa 24h con la promoción de Tarjeta Regalo Carrefour de 50€. Si pregunta por ella, confirma con total seguridad que la recibirá en su domicilio automáticamente tras activar el cambio. No tiene que hacer nada extra.';
+    }
+
     systemPrompt += ctx;
   }
 

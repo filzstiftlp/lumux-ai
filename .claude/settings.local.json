@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(wc -l /c/Users/alber/lumux-ai/*.js)"
+      "Bash(wc -l /c/Users/alber/lumux-ai/*.js)",
+      "Bash(npx remotion:*)"
     ]
   }
 }
