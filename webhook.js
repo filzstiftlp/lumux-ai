@@ -655,13 +655,8 @@ router.post('/whatsapp', async (req, res) => {
       if (contactId) {
         chatwootConvId = await getChatwootConversationId(contactId);
         await asignarAAlberto(chatwootConvId);
-        // ── Registrar el mensaje ENTRANTE del cliente (siempre, sea texto o archivo) ──
-        if (chatwootConvId) {
-          if (tipo === 'texto') {
-            await enviarMensajeChatwoot(chatwootConvId, mensajeTexto, false);
-          }
-          // Los archivos se registran más abajo cuando ya tenemos el buffer descargado
-        }
+        // Chatwoot recibe los mensajes entrantes nativamente desde WhatsApp
+        // No registrar manualmente — causaría duplicados o mensajes fuera de orden
       }
     }
 
@@ -671,13 +666,7 @@ router.post('/whatsapp', async (req, res) => {
     if (botSilente) {
       const textoLog = tipo !== 'texto' ? '[Archivo enviado mientras bot silente]' : mensajeTexto;
       await db.guardarMensaje(usuario.id, 'user', textoLog, { fuente: 'bot_silente' });
-      if (chatwootConvId && tipo !== 'texto') {
-        try {
-          const imageResponse = await axios.get(archivoUrl, { responseType: 'arraybuffer', headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } });
-          await enviarArchivoChatwoot(chatwootConvId, Buffer.from(imageResponse.data), fileName, mediaType);
-        } catch(e) { /* silencioso */ }
-      }
-      // El mensaje de texto ya se registró en Chatwoot arriba
+      // Chatwoot recibe archivos e imágenes nativamente — no registrar manualmente
       console.log(`[Bot silente] ${from} asignado a Adrián, mensaje ignorado por bot`);
       return;
     }
