@@ -27,7 +27,7 @@ FORMATO DE PRECIOS — MUY IMPORTANTE:
 - NUNCA uses "céntimos/kWh" — confunde al cliente y da sensación de precio alto.
 - Para el ahorro usa siempre €/año y €/mes, no solo porcentajes. Ejemplo: "492€ al año (10% menos)".
 - Si el ahorro parece pequeño en %, arguméntalo en €/año o comparando precios por kWh: "pagas 0.1279 €/kWh vs tu tarifa actual".
-- POTENCIA — CRÍTICO: NUNCA cites el precio unitario €/kW/día de un solo periodo (P1 o P2) porque confunde. Habla siempre del COSTE MENSUAL TOTAL de potencia que aparece en el contexto como "Coste potencia actual (P1+P2 mes completo)". NUNCA calcules este importe por tu cuenta — usa SIEMPRE el dato que aparece en el contexto de la factura. Si el contexto dice "Coste potencia actual: 19.52€/mes", di exactamente 19.52€/mes, no hagas ningún cálculo propio.
+- POTENCIA — PROHIBICIÓN ABSOLUTA: JAMÁS calcules ni estimes el coste de potencia del cliente actual. NO multipliques precios por kW/día por potencia ni por días. Si el cliente pregunta de dónde viene el ahorro, di ÚNICAMENTE el ahorro total en €/año y €/mes que aparece en el DESGLOSE AHORRO del contexto. Si el contexto incluye "Potencia actual: X€/mes", usa ese número exacto. Si NO aparece, NO lo menciones. Explicar el ahorro en potencia sin el dato exacto genera datos falsos que desacreditan la comparativa.
 
 PERMANENCIA:
 - Tanto Iberdrola Impulsa 24h como Gana Energía Tarifa Luz Fija 24h son SIN PERMANENCIA.
@@ -603,6 +603,18 @@ function generarResumenHistorial(datosFactura, comparativa) {
     ? (((t.precio_kw_p1 || t.precio_kw || 0) * d.potencia * 30) + ((t.precio_kw_p2 || 0) * d.potencia * 30)).toFixed(2)
     : null;
 
+  // Coste potencia actual: usar importe_potencia del OCR si está disponible,
+  // si no calcular desde precio_potencia_dia (P1) + precio_potencia_dia_p2 (P2)
+  let potenciaActual = f.importe_potencia ? parseFloat(f.importe_potencia) : null;
+  if (!potenciaActual && f.potencia_kw) {
+    const p1 = f.precio_potencia_dia || 0;
+    const p2 = f.precio_potencia_dia_p2 || 0;
+    const dias = f.dias_facturacion || 30;
+    if (p1 > 0) {
+      potenciaActual = parseFloat(((p1 * f.potencia_kw * dias) + (p2 * f.potencia_kw * dias)).toFixed(2));
+    }
+  }
+
   const datosComparativaStr = [
     `Precio actual normalizado: ${d.precio_actual_mes}€/mes (${d.precio_actual_anual}€/año)`,
     `Tarifa recomendada: ${t.compania} - ${t.nombre_tarifa}`,
@@ -617,7 +629,6 @@ function generarResumenHistorial(datosFactura, comparativa) {
   ].filter(Boolean).join('. ');
 
   // Desglose para que el bot explique el ahorro sin inventar números
-  const potenciaActual = f.importe_potencia ? parseFloat(f.importe_potencia) : null;
   const potenciaNueva  = costePotenciaNuevaMes ? parseFloat(costePotenciaNuevaMes) : null;
   const ahorroPotencia = (potenciaActual && potenciaNueva) ? (potenciaActual - potenciaNueva).toFixed(2) : null;
 
