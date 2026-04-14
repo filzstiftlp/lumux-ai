@@ -235,7 +235,11 @@ CAMPOS REQUERIDOS:
   "precio_fijo_mes": € fijo mensual o null,
   "consumo_anual_estimado": kWh anuales estimados o null,
   "nombre_titular": "nombre completo del titular que aparece en la factura (ej: MANUEL GARCIA LOPEZ)" o null,
-  "dni_titular": "DNI o NIF del titular si aparece (formato 12345678X)" o null
+  "dni_titular": "DNI o NIF del titular si aparece (formato 12345678X)" o null,
+  "direccion_suministro": "dirección completa del punto de suministro (calle, número, piso)" o null,
+  "codigo_postal": "código postal de 5 dígitos" o null,
+  "ciudad": "ciudad o municipio del suministro" o null,
+  "provincia": "provincia del suministro" o null
 }
 
 REGLAS IMPORTANTES:
@@ -579,6 +583,7 @@ function generarResumenHistorial(datosFactura, comparativa) {
     f.precio_kwh_p1 ? `Precio P1: ${f.precio_kwh_p1} €/kWh` : null,
     f.precio_kwh_p2 ? `Precio P2: ${f.precio_kwh_p2} €/kWh` : null,
     f.precio_kwh_p3 ? `Precio P3: ${f.precio_kwh_p3} €/kWh` : null,
+    `Precio potencia: ${f.precio_potencia_dia || 0} €/kW/día`,
     `Importe energía: ${f.importe_energia || 0}€`,
     `Importe potencia: ${f.importe_potencia || 0}€`,
     `Total factura (con IVA): ${f.precio_total || 0}€`,
@@ -614,6 +619,7 @@ function generarResumenHistorial(datosFactura, comparativa) {
     t.precio_kwh_p1 ? `Nuevo precio P1: ${t.precio_kwh_p1} €/kWh` : null,
     t.precio_kwh_p2 ? `Nuevo precio P2: ${t.precio_kwh_p2} €/kWh` : null,
     t.precio_kwh_p3 ? `Nuevo precio P3: ${t.precio_kwh_p3} €/kWh` : null,
+    t.precio_kw_p1 ? `Nueva potencia P1: ${t.precio_kw_p1} €/kW/día` : null,
     t.precio_fijo_mes ? `Cuota fija nueva tarifa: ${t.precio_fijo_mes}€/mes` : null,
   ].filter(Boolean).join('. ');
 

@@ -396,8 +396,13 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     return { respuesta: bloqueo.mensaje, metadata: { cups, bloqueado: true } };
   }
 
-  // Guardar/actualizar propiedad con el CUPS
-  const propiedadId = await db.upsertPropiedad(usuario.id, cups);
+  // Guardar/actualizar propiedad con el CUPS y dirección extraída del OCR
+  const propiedadId = await db.upsertPropiedad(usuario.id, cups, {
+    direccion:  datosFactura.direccion_suministro || null,
+    codigo_postal: datosFactura.codigo_postal || null,
+    ciudad:     datosFactura.ciudad || null,
+    provincia:  datosFactura.provincia || null,
+  });
 
   // ─── GUARDAR FACTURA ─────────────────────────────────────────────────────
   const factura = await db.guardarFactura(usuario.id, {

@@ -123,12 +123,27 @@ async function getInformePorShortId(shortId) {
 // ─── CUPS ─────────────────────────────────────────────────────────────────────
 
 // Crea o devuelve el id de la propiedad para ese CUPS
-async function upsertPropiedad(usuarioId, cups) {
+async function upsertPropiedad(usuarioId, cups, datosDir = {}) {
   if (!cups) return null;
   const { data: existente } = await supabase.from('propiedades').select('id').eq('cups', cups).single();
-  if (existente) return existente.id;
+
+  // Campos de dirección disponibles
+  const camposDir = {};
+  if (datosDir.direccion)     camposDir.direccion     = datosDir.direccion;
+  if (datosDir.codigo_postal) camposDir.codigo_postal = datosDir.codigo_postal;
+  if (datosDir.ciudad)        camposDir.ciudad        = datosDir.ciudad;
+  if (datosDir.provincia)     camposDir.provincia     = datosDir.provincia;
+
+  if (existente) {
+    // Actualizar dirección si ahora tenemos datos y antes no
+    if (Object.keys(camposDir).length > 0) {
+      await supabase.from('propiedades').update(camposDir).eq('id', existente.id);
+    }
+    return existente.id;
+  }
+
   const { data: nueva } = await supabase.from('propiedades')
-    .insert({ usuario_id: usuarioId, cups })
+    .insert({ usuario_id: usuarioId, cups, ...camposDir })
     .select('id').single();
   return nueva?.id || null;
 }
