@@ -637,7 +637,8 @@ router.post('/whatsapp', async (req, res) => {
     const from = msg.from;
     const nombre = value?.contacts?.[0]?.profile?.name || '';
     const ourPhone = value?.metadata?.display_phone_number?.replace(/[\s+\-()]/g, '');
-    if (ourPhone && from === ourPhone) return;
+    // No bloquear mensajes del propio número — pueden ser códigos de verificación de Meta
+    if (ourPhone && from === ourPhone && msg.type !== 'text') return;
 
     let tipo = 'texto', mensajeTexto = '', archivoUrl = null, mediaType = null, fileName = null;
     if (msg.type === 'text') { mensajeTexto = msg.text.body; }
@@ -655,8 +656,11 @@ router.post('/whatsapp', async (req, res) => {
       if (contactId) {
         chatwootConvId = await getChatwootConversationId(contactId);
         await asignarAAlberto(chatwootConvId);
-        // Chatwoot recibe los mensajes entrantes nativamente desde WhatsApp
-        // No registrar manualmente — causaría duplicados o mensajes fuera de orden
+        // ── Registrar mensaje de texto entrante en Chatwoot ──────────────────
+        // Los archivos se registran más abajo cuando ya tenemos el buffer descargado
+        if (chatwootConvId && tipo === 'texto') {
+          await enviarMensajeChatwoot(chatwootConvId, mensajeTexto, false);
+        }
       }
     }
 
@@ -666,7 +670,13 @@ router.post('/whatsapp', async (req, res) => {
     if (botSilente) {
       const textoLog = tipo !== 'texto' ? '[Archivo enviado mientras bot silente]' : mensajeTexto;
       await db.guardarMensaje(usuario.id, 'user', textoLog, { fuente: 'bot_silente' });
-      // Chatwoot recibe archivos e imágenes nativamente — no registrar manualmente
+      if (chatwootConvId && tipo !== 'texto') {
+        try {
+          const imageResponse = await axios.get(archivoUrl, { responseType: 'arraybuffer', headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } });
+          await enviarArchivoChatwoot(chatwootConvId, Buffer.from(imageResponse.data), fileName, mediaType);
+        } catch(e) { console.error('[Chatwoot archivo silente]', e.message); }
+      }
+      // Texto ya registrado en Chatwoot arriba
       console.log(`[Bot silente] ${from} asignado a Adrián, mensaje ignorado por bot`);
       return;
     }
