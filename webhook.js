@@ -128,21 +128,17 @@ Tu informe con el ahorro pasando a *${compania}* sigue disponible. Solo rellena 
 async function getChatwootContactId(phone, nombre) {
   try {
     const base = { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } };
-    console.log(`[CW] Buscando contacto: ${phone} | URL: ${process.env.CHATWOOT_URL}`);
     const searchRes = await axios.get(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts/search?q=${phone}`, base
     );
     const contacts = searchRes.data?.payload?.contacts || searchRes.data?.payload || [];
-    console.log(`[CW] Contactos encontrados: ${contacts.length}`);
-    if (contacts.length > 0) { console.log(`[CW] Contacto existente id=${contacts[0].id}`); return contacts[0].id; }
+    if (contacts.length > 0) return contacts[0].id;
     const createRes = await axios.post(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts`,
       { name: nombre || phone, phone_number: `+${phone}` }, base
     );
-    const newId = createRes.data?.id || createRes.data?.payload?.id;
-    console.log(`[CW] Contacto creado id=${newId}`);
-    return newId;
-  } catch (e) { console.error('[CW] contact error:', e.message, e.response?.status, JSON.stringify(e.response?.data)); return null; }
+    return createRes.data?.id || createRes.data?.payload?.id;
+  } catch (e) { console.error('Chatwoot contact error:', e.message); return null; }
 }
 
 let _chatwootInboxId = null;
@@ -303,13 +299,11 @@ async function enviarMensajeChatwoot(conversationId, mensaje, esBot = false) {
     const payload = esBot
       ? { content: `🤖 ${mensaje}`, message_type: 'outgoing', private: true }
       : { content: mensaje, message_type: 'incoming' };
-    console.log(`[CW] Enviando msg a conv ${conversationId} | esBot=${esBot} | tipo=${payload.message_type}`);
-    const res = await axios.post(
+    await axios.post(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations/${conversationId}/messages`,
       payload, { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } }
     );
-    console.log(`[CW] Msg enviado OK | id=${res.data?.id}`);
-  } catch (e) { console.error('[CW] msg error:', e.message, e.response?.status, JSON.stringify(e.response?.data)); }
+  } catch (e) { console.error('Chatwoot msg error:', e.message); }
 }
 
 async function enviarArchivoChatwoot(conversationId, fileBuffer, fileName, mimeType) {
@@ -642,8 +636,7 @@ router.post('/whatsapp', async (req, res) => {
     const msg = messages[0];
     const from = msg.from;
     const nombre = value?.contacts?.[0]?.profile?.name || '';
-    const ourPhone = value?.metadata?.display_phone_number?.replace(/[\s+\-()]/g, '');
-    if (ourPhone && from === ourPhone) return;
+    // Mensajes del propio número permitidos (códigos verificación Meta)
 
     let tipo = 'texto', mensajeTexto = '', archivoUrl = null, mediaType = null, fileName = null;
     if (msg.type === 'text') { mensajeTexto = msg.text.body; }
