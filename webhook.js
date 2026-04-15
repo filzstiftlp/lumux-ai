@@ -628,6 +628,7 @@ router.get('/whatsapp', (req, res) => {
 router.post('/whatsapp', async (req, res) => {
   try {
     res.status(200).send('OK');
+    console.log('[WA RAW]', JSON.stringify(req.body));
     const entry = req.body.entry?.[0];
     const value = entry?.changes?.[0]?.value;
     const messages = value?.messages;
@@ -636,7 +637,8 @@ router.post('/whatsapp', async (req, res) => {
     const msg = messages[0];
     const from = msg.from;
     const nombre = value?.contacts?.[0]?.profile?.name || '';
-    // Mensajes del propio número permitidos (códigos verificación Meta)
+    const ourPhone = value?.metadata?.display_phone_number?.replace(/[\s+\-()]/g, '');
+    if (ourPhone && from === ourPhone) return;
 
     let tipo = 'texto', mensajeTexto = '', archivoUrl = null, mediaType = null, fileName = null;
     if (msg.type === 'text') { mensajeTexto = msg.text.body; }
