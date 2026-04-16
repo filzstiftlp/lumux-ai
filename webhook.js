@@ -963,6 +963,12 @@ router.post('/contrato', async (req, res) => {
           .eq('id', ofertaId);
       }
 
+      // ─── Registrar en tabla contratos para bloqueo definitivo por CUPS ────
+      await db.registrarContrato(propiedadData?.id, informeData?.cups, {
+        compania:  nueva_compania,
+        oferta_id: ofertaId || null,
+      });
+
       await db.actualizarEstado(informeData.usuario_id, 'contratado');
       if (informeData?.telefono) cancelarRecordatorios(informeData.telefono);
 

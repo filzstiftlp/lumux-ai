@@ -153,50 +153,100 @@ async function upsertPropiedad(usuarioId, cups, datosDir = {}) {
 async function verificarBloqueCUPS(cups, usuarioId) {
   if (!cups) return { bloqueado: false };
 
-  // 1. Contrato activo en tabla contratos
-  const { data: propiedad } = await supabase.from('propiedades').select('id').eq('cups', cups).single();
+  const msgTramitando = (comp) =>
+    `✅ Ya tienes un cambio en tramitación para este suministro (CUPS: ${cups}) hacia *${comp || 'la nueva compañía'}*.\n\nRecibirás el contrato en tu email en menos de 24h. ¿Tienes alguna duda? Escríbenos aquí 💬`;
+  const msgActivo = (comp) =>
+    `✅ Este suministro (CUPS: ${cups}) ya tiene un contrato activo con *${comp || 'Lumux'}* gestionado por nosotros.\n\nSi necesitas hacer algún cambio, llámanos directamente por este WhatsApp 📞`;
+
+  // ── 1. Contrato en tabla contratos (activo o tramitando) ──────────────────
+  const { data: propiedad } = await supabase.from('propiedades').select('id').eq('cups', cups).maybeSingle();
   if (propiedad) {
     const { data: contrato } = await supabase.from('contratos')
-      .select('id, compania').eq('propiedad_id', propiedad.id).eq('estado', 'activo').limit(1).single();
+      .select('id, compania, estado')
+      .eq('propiedad_id', propiedad.id)
+      .in('estado', ['activo', 'tramitando'])
+      .order('fecha_contrato', { ascending: false })
+      .limit(1).maybeSingle();
     if (contrato) {
       return {
-        bloqueado: true, motivo: 'contrato_activo',
-        mensaje: `✅ Este suministro (CUPS: ${cups}) ya tiene un contrato activo con *${contrato.compania}* gestionado por Lumux.\n\nSi necesitas hacer algún cambio, llámanos directamente por este WhatsApp 📞`
+        bloqueado: true, motivo: 'contrato_' + contrato.estado,
+        mensaje: contrato.estado === 'activo' ? msgActivo(contrato.compania) : msgTramitando(contrato.compania)
       };
     }
 
-    // 2. Oferta firmada ligada a facturas de esta propiedad
+    // ── 2. Oferta firmada vía factura → propiedad ─────────────────────────
     const { data: factIds } = await supabase.from('facturas').select('id').eq('propiedad_id', propiedad.id);
     if (factIds && factIds.length > 0) {
       const ids = factIds.map(f => f.id);
       const { data: oferta } = await supabase.from('ofertas')
         .select('id, tarifas(compania)').eq('estado', 'firmada').in('factura_id', ids)
-        .order('fecha_firmado', { ascending: false }).limit(1).single();
+        .order('fecha_firmado', { ascending: false }).limit(1).maybeSingle();
       if (oferta) {
-        const comp = oferta.tarifas?.compania || 'la nueva compañía';
-        return {
-          bloqueado: true, motivo: 'oferta_firmada',
-          mensaje: `✅ Ya tienes un cambio en tramitación para este suministro (CUPS: ${cups}) hacia *${comp}*.\n\nRecibirás el contrato en tu email en menos de 24h. ¿Tienes alguna duda? Escríbenos aquí 💬`
-        };
+        return { bloqueado: true, motivo: 'oferta_firmada', mensaje: msgTramitando(oferta.tarifas?.compania) };
       }
-    }
-
-    // 3. Informe con cups firmado (fallback para facturas sin propiedad_id)
-    const { data: informeFirmado } = await supabase.from('informes')
-      .select('id, nueva_compania, ofertas(estado)')
-      .eq('cups', cups)
-      .not('oferta_id', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(1).single();
-    if (informeFirmado?.ofertas?.estado === 'firmada') {
-      return {
-        bloqueado: true, motivo: 'oferta_firmada',
-        mensaje: `✅ Ya tienes un cambio en tramitación para este suministro (CUPS: ${cups}) hacia *${informeFirmado.nueva_compania || 'la nueva compañía'}*.\n\nRecibirás el contrato en tu email en menos de 24h. ¿Tienes alguna duda? Escríbenos aquí 💬`
-      };
     }
   }
 
+  // ── 3. Informe firmado por CUPS — SIEMPRE, aunque no exista propiedad ────
+  // (es el check más robusto porque usa el campo cups del informe directamente)
+  const { data: informeFirmado } = await supabase.from('informes')
+    .select('id, nueva_compania, ofertas(estado)')
+    .eq('cups', cups)
+    .not('oferta_id', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1).maybeSingle();
+  if (informeFirmado?.ofertas?.estado === 'firmada') {
+    return { bloqueado: true, motivo: 'oferta_firmada', mensaje: msgTramitando(informeFirmado.nueva_compania) };
+  }
+
   return { bloqueado: false };
+}
+
+// ─── REGISTRAR CONTRATO FIRMADO ───────────────────────────────────────────────
+// Se llama al firmar → crea/actualiza registro en contratos para bloqueo definitivo por CUPS
+async function registrarContrato(propiedadId, cups, datos = {}) {
+  if (!propiedadId && !cups) return null;
+
+  // Resolver propiedad_id si solo tenemos cups
+  let propId = propiedadId;
+  if (!propId && cups) {
+    const { data: prop } = await supabase.from('propiedades').select('id').eq('cups', cups).maybeSingle();
+    propId = prop?.id || null;
+  }
+  if (!propId) {
+    console.warn(`[Contratos] No se pudo resolver propiedad para CUPS=${cups}`);
+    return null;
+  }
+
+  // Ver si ya existe un contrato para esta propiedad (no hay unique constraint)
+  const { data: existente } = await supabase
+    .from('contratos').select('id')
+    .eq('propiedad_id', propId)
+    .maybeSingle();
+
+  const payload = {
+    propiedad_id:   propId,
+    compania:       datos.compania  || null,
+    oferta_id:      datos.oferta_id || null,
+    estado:         'tramitando',
+    fecha_contrato: new Date().toISOString(),
+    origen:         'bot',
+  };
+
+  let result;
+  if (existente) {
+    const { data } = await supabase.from('contratos')
+      .update({ compania: payload.compania, oferta_id: payload.oferta_id, estado: 'tramitando', fecha_contrato: payload.fecha_contrato })
+      .eq('id', existente.id).select().maybeSingle();
+    result = data;
+  } else {
+    const { data } = await supabase.from('contratos')
+      .insert(payload).select().maybeSingle();
+    result = data;
+  }
+
+  console.log(`[Contratos] ✅ CUPS=${cups} propId=${propId} estado=tramitando id=${result?.id}`);
+  return result;
 }
 
 // ─── HISTORIAL COMPLETO POR TELÉFONO ─────────────────────────────────────────
@@ -250,5 +300,6 @@ module.exports = {
   getInformePorShortId,
   upsertPropiedad,
   verificarBloqueCUPS,
+  registrarContrato,
   getContratosYInformesPorTelefono,
 };
