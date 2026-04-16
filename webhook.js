@@ -169,11 +169,23 @@ async function getChatwootConversationId(contactId) {
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts/${contactId}/conversations`, base
     );
     const convs = convsRes.data?.payload || [];
-    const open = convs.find(c => c.status === 'open' && String(c.inbox_id) === String(inboxId));
-    if (open) return open.id;
+    // Buscar conversación activa: open O pending (pending = nuevo contacto aún no atendido)
+    const existing = convs.find(c =>
+      ['open', 'pending'].includes(c.status) && String(c.inbox_id) === String(inboxId)
+    );
+    if (existing) {
+      // Si está en pending, abrirla para que el agente la vea en la bandeja principal
+      if (existing.status === 'pending') {
+        await axios.post(
+          `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations/${existing.id}/toggle_status`,
+          { status: 'open' }, base
+        ).catch(() => {});
+      }
+      return existing.id;
+    }
     const createRes = await axios.post(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations`,
-      { inbox_id: parseInt(inboxId), contact_id: contactId }, base
+      { inbox_id: parseInt(inboxId), contact_id: contactId, status: 'open' }, base
     );
     return createRes.data?.id || createRes.data?.payload?.id;
   } catch (e) { console.error('Chatwoot conv error:', e.message); return null; }
@@ -642,6 +654,17 @@ router.post('/whatsapp', async (req, res) => {
 
     let tipo = 'texto', mensajeTexto = '', archivoUrl = null, mediaType = null, fileName = null;
     if (msg.type === 'text') { mensajeTexto = msg.text.body; }
+    else if (msg.type === 'interactive') {
+      // Respuestas de botones o listas — típico del primer mensaje de anuncios Meta
+      mensajeTexto = msg.interactive?.button_reply?.title ||
+                     msg.interactive?.list_reply?.title ||
+                     msg.interactive?.nfm_reply?.submitted_form_data?.name ||
+                     '[Interacción de botón]';
+    }
+    else if (msg.type === 'button') {
+      // Quick reply de plantilla — también habitual en ads
+      mensajeTexto = msg.button?.text || '[Botón seleccionado]';
+    }
     else if (msg.type === 'image') { tipo = 'imagen'; archivoUrl = await getMediaUrl(msg.image.id); mediaType = msg.image.mime_type || 'image/jpeg'; fileName = `factura_${Date.now()}.jpg`; }
     else if (msg.type === 'document') { tipo = 'archivo'; archivoUrl = await getMediaUrl(msg.document.id); mediaType = msg.document.mime_type || 'application/pdf'; fileName = msg.document.filename || `factura_${Date.now()}.pdf`; }
     else return;

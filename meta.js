@@ -54,7 +54,7 @@ async function enviarEventoCAPI({ eventName, telefono, email, valor, moneda = 'E
   const event = {
     event_name:       eventName,
     event_time:       Math.floor(Date.now() / 1000),
-    action_source:    'other',   // viene del bot, no de web ni app
+    action_source:    'business_messaging',  // eventos que ocurren via WhatsApp Business
     user_data:        userData,
     custom_data:      {
       currency: moneda,
