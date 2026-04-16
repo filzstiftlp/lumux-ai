@@ -441,6 +441,45 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     return { respuesta: bloqueo.mensaje, metadata: { cups, bloqueado: true } };
   }
 
+  // ─── INFORME DUPLICADO: mismo CUPS ya tiene informe activo sin firmar ────────
+  // Si ya generamos un informe para este CUPS y el cliente no ha firmado todavía,
+  // reenviamos el mismo enlace en lugar de crear uno nuevo (protege el countdown y la credibilidad)
+  try {
+    const { data: informeExistente } = await db.supabase
+      .from('informes')
+      .select('id, short_id, nombre, compania_actual, nueva_compania, nueva_tarifa, ahorro_anual, pct_ahorro, ofertas(estado)')
+      .eq('cups', cups)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (informeExistente && informeExistente.ofertas?.estado !== 'firmada') {
+      console.log(`[CUPS] Informe duplicado detectado para CUPS ${cups} → reenviar short_id=${informeExistente.short_id}`);
+      const urlCorta = `${process.env.WEB_URL || 'https://lumux.es'}/informe.html?id=${informeExistente.short_id}`;
+      try {
+        await enviarPlantillaInforme(
+          telefono,
+          informeExistente.nombre || usuario.nombre,
+          informeExistente.compania_actual,
+          informeExistente.nueva_compania,
+          informeExistente.ahorro_anual,
+          informeExistente.pct_ahorro || 0,
+          informeExistente.short_id
+        );
+        return { respuesta: null, metadata: { short_id: informeExistente.short_id, url_informe: urlCorta, duplicado: true } };
+      } catch (e) {
+        // Si falla la plantilla, fallback a texto
+        return {
+          respuesta: `✅ Ya tengo tu comparativa guardada.\n\n👉 ${urlCorta}\n\nTu informe personalizado sigue disponible. ¿Tienes alguna duda?`,
+          metadata: { short_id: informeExistente.short_id, url_informe: urlCorta, duplicado: true }
+        };
+      }
+    }
+  } catch (dupErr) {
+    console.warn('[CUPS] Error al comprobar informe duplicado:', dupErr.message);
+    // Continuar con el flujo normal si falla la comprobación
+  }
+
   // Guardar/actualizar propiedad con el CUPS y dirección extraída del OCR
   const propiedadId = await db.upsertPropiedad(usuario.id, cups, {
     direccion:  datosFactura.direccion_suministro || null,
