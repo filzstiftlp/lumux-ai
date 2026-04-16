@@ -250,8 +250,8 @@ CAMPOS REQUERIDOS:
   "tipo_tarifa": "2.0TD" o "3.0TD",
   "precio_fijo_mes": € fijo mensual o null,
   "consumo_anual_estimado": kWh anuales estimados o null,
-  "nombre_titular": "nombre completo del titular que aparece en la factura (ej: MANUEL GARCIA LOPEZ)" o null,
-  "dni_titular": "DNI o NIF del titular si aparece (formato 12345678X)" o null,
+  "nombre_titular": "nombre completo del titular si es visible en la factura, o null si está tapado/ilegible — CAMPO OPCIONAL, su ausencia NO impide el análisis",
+  "dni_titular": "DNI o NIF del titular si es visible (formato 12345678X), o null si está tapado/ilegible — CAMPO OPCIONAL, su ausencia NO impide el análisis",
   "direccion_suministro": "dirección completa del punto de suministro (calle, número, piso)" o null,
   "codigo_postal": "código postal de 5 dígitos" o null,
   "ciudad": "ciudad o municipio del suministro" o null,
@@ -259,6 +259,7 @@ CAMPOS REQUERIDOS:
 }
 
 REGLAS IMPORTANTES:
+- nombre_titular y dni_titular son OPCIONALES. Muchos clientes tapan estos datos por privacidad. Si no son visibles, devuelve null y extrae igualmente todos los demás campos con normalidad. Su ausencia NO es motivo para considerar la factura ilegible.
 - consumo_kwh: SIEMPRE suma P1+P2+P3 si hay periodos. Ejemplo: 298+205+367 = 870 kWh
 - precio_kwh: DIVIDE importe_energia / consumo_kwh. Si hay descuento contractual, usa importe_energia_sin_descuento / consumo_kwh para reflejar el precio real de tarifa
 - precio_total: incluye el descuento contractual si lo hay (es el importe real que paga el cliente habitualmente)
@@ -475,8 +476,8 @@ Devuelve SOLO el JSON, sin texto adicional ni backticks:
   "tarifa_acceso": "RL.1", "RL.2" o "RL.3" según aparezca en la factura,
   "cups": "código CUPS completo o null",
   "consumo_anual_estimado": kWh anuales estimados si aparece en la factura, o null,
-  "nombre_titular": "nombre completo del titular que aparece en la factura" o null,
-  "dni_titular": "DNI o NIF del titular si aparece (formato 12345678X)" o null
+  "nombre_titular": "nombre completo del titular si es visible, o null si está tapado/ilegible — CAMPO OPCIONAL",
+  "dni_titular": "DNI o NIF del titular si es visible (formato 12345678X), o null si está tapado/ilegible — CAMPO OPCIONAL"
 }
 REGLA CRÍTICA precio_total: término_fijo + (consumo_kwh × precio_kwh) + impuesto_hidrocarburos + IVA 21%. NO incluir servicios de valor añadido.`
         }
