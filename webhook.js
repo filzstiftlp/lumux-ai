@@ -43,7 +43,8 @@ function programarTraspasoSinFactura(telefono) {
       if (facturas?.length) return; // ya mandó factura, no traspasar
       const contactId = await getChatwootContactId(telefono, null);
       if (!contactId) return;
-      const convId = await getChatwootConversationId(contactId);
+      const convResult = await getChatwootConversationId(contactId);
+      const convId = convResult?.id;
       if (!convId) return;
       await asignarAAgente(convId);
       await enviarNotaContextoAgente(convId, telefono, 'sin_factura');
@@ -181,13 +182,14 @@ async function getChatwootConversationId(contactId) {
           { status: 'open' }, base
         ).catch(() => {});
       }
-      return existing.id;
+      return { id: existing.id, nueva: false };
     }
     const createRes = await axios.post(
       `${process.env.CHATWOOT_URL}/api/v1/accounts/1/conversations`,
       { inbox_id: parseInt(inboxId), contact_id: contactId, status: 'open' }, base
     );
-    return createRes.data?.id || createRes.data?.payload?.id;
+    const id = createRes.data?.id || createRes.data?.payload?.id;
+    return { id, nueva: true };
   } catch (e) { console.error('Chatwoot conv error:', e.message); return null; }
 }
 
@@ -386,6 +388,16 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
   const datosFactura = await analizarFactura(base64, mediaType);
   if (!datosFactura) {
     return { respuesta: '❌ No he podido leer la factura. ¿Puedes enviarla más clara o en PDF?', metadata: {} };
+  }
+
+  // ─── VALIDACIÓN: factura incompleta (página parcial sin consumo ni total) ──
+  const sinConsumo    = !datosFactura.consumo_kwh && !datosFactura.consumo_p1_kwh;
+  const sinPrecioTotal = !datosFactura.precio_total;
+  if (sinConsumo || sinPrecioTotal) {
+    return {
+      respuesta: `📄 La imagen que me has enviado está incompleta — no puedo ver los datos de consumo o el importe total de tu factura.\n\nPara darte el ahorro exacto necesito que me la envíes de una de estas formas:\n\n📎 *En PDF* — descárgala desde la app o web de tu compañía (Endesa, Iberdrola, etc.) y envíamela aquí\n\n🖼️ *Foto completa* — asegúrate de que se vea la página donde aparece el resumen de kWh consumidos y el total a pagar\n\n¡En cuanto la tenga te preparo la comparativa! 👇`,
+      metadata: {}
+    };
   }
 
   const esGas = datosFactura.tipo_suministro === 'gas';
@@ -674,15 +686,25 @@ router.post('/whatsapp', async (req, res) => {
 
     // ─── CHATWOOT: obtener / crear conversación y asignar a Alberto ──────────
     let chatwootConvId = null;
+    let chatwootConvNueva = false;
     if (process.env.CHATWOOT_URL && process.env.CHATWOOT_API_TOKEN) {
       const contactId = await getChatwootContactId(from, nombre);
       if (contactId) {
-        chatwootConvId = await getChatwootConversationId(contactId);
+        const convResult = await getChatwootConversationId(contactId);
+        chatwootConvId    = convResult?.id;
+        chatwootConvNueva = convResult?.nueva || false;
         await asignarAAlberto(chatwootConvId);
-        // ── Registrar el mensaje ENTRANTE del cliente (siempre, sea texto o archivo) ──
         if (chatwootConvId) {
           if (tipo === 'texto') {
             await enviarMensajeChatwoot(chatwootConvId, mensajeTexto, false);
+            // ── Nota privada de respaldo para nuevo contacto ──────────────────
+            if (chatwootConvNueva) {
+              await enviarMensajeChatwoot(
+                chatwootConvId,
+                `📋 *PRIMER CONTACTO*\n👤 *Cliente:* ${nombre || from}\n📱 *Teléfono:* +${from}\n💬 *Mensaje:* ${mensajeTexto}`,
+                true
+              );
+            }
           }
           // Los archivos se registran más abajo cuando ya tenemos el buffer descargado
         }
@@ -752,6 +774,14 @@ router.post('/whatsapp', async (req, res) => {
       await db.guardarMensaje(usuario.id, 'assistant', respuesta, metadata);
       await enviarMensajeWhatsApp(from, respuesta);
       if (chatwootConvId) await enviarMensajeChatwoot(chatwootConvId, respuesta, true);
+      // Nota de respaldo: primera respuesta del bot en conversación nueva
+      if (chatwootConvId && chatwootConvNueva) {
+        await enviarMensajeChatwoot(
+          chatwootConvId,
+          `🤖 *PRIMERA RESPUESTA BOT:* ${respuesta}`,
+          true
+        );
+      }
     } else {
       // respuesta === null → plantilla de informe enviada
       const nota = `📊 Informe enviado con botón | ID: ${metadata.short_id} | URL: ${metadata.url_informe}`;
