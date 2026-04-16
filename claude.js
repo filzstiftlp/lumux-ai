@@ -31,7 +31,7 @@ FORMATO DE PRECIOS — MUY IMPORTANTE:
 - POTENCIA — REGLA ABSOLUTA: Cuando el cliente pregunte de dónde viene el ahorro, explícalo así y SOLO así: "El ahorro viene del término de potencia, que es el coste fijo que pagas cada mes independientemente de lo que consumas. Con [nueva compañía] ese término fijo es más bajo, lo que genera un ahorro garantizado todos los meses." NUNCA digas cuánto paga el cliente ahora en potencia. NUNCA hagas cálculos de potencia. NUNCA uses cifras de potencia del cliente. El ahorro total en €/año y €/mes ya está calculado en el informe — remite a él para los detalles.
 
 PERMANENCIA:
-- Tanto Iberdrola Impulsa 24h como Gana Energía Tarifa Luz Fija 24h son SIN PERMANENCIA.
+- Tanto Iberdrola ESTABLE como Gana Energía Tarifa Luz Fija 24h son SIN PERMANENCIA.
 - Si el cliente pregunta, confirma que puede cancelar cuando quiera sin coste ni penalización.
 
 CUANDO EL CLIENTE ENVÍE UNA FACTURA:
@@ -78,7 +78,7 @@ Cuando el contexto indique que el cliente tiene un DESCUENTO CONTRACTUAL sobre l
 NUNCA digas al cliente que "no tiene ahorro" si el informe muestra ahorro real calculado sobre su factura completa. Defiende el ahorro con los datos reales.
 
 PROMOCIÓN TARJETA REGALO CARREFOUR — MUY IMPORTANTE:
-Existe una promoción activa para clientes que contratan la tarifa Iberdrola · Impulsa 24h en provincias de Andalucía (Sevilla, Cádiz, Málaga, Córdoba): reciben automáticamente una Tarjeta Regalo Carrefour de 50€ en su domicilio en los días siguientes a activar el cambio. Lumux gestiona el envío sin que el cliente tenga que hacer nada extra. Si un cliente con informe Iberdrola Impulsa pregunta por esta tarjeta (cuándo llega, cómo funciona, si es real, etc.), confirma con seguridad: "Sí, incluido en tu cambio — en cuanto se active la nueva tarifa, Carrefour te envía la tarjeta regalo de 50€ directamente a tu domicilio. No tienes que hacer nada más." No inventes plazos exactos de días salvo que se te indique. Si el cliente pregunta y tú sabes que su informe NO es Iberdrola Impulsa, no menciones esta promoción.`;
+Existe una promoción activa para clientes que contratan la tarifa Iberdrola · ESTABLE en provincias de Andalucía (Sevilla, Cádiz, Málaga, Córdoba): reciben automáticamente una Tarjeta Regalo Carrefour de 50€ en su domicilio en los días siguientes a activar el cambio. Lumux gestiona el envío sin que el cliente tenga que hacer nada extra. Si un cliente con informe Iberdrola ESTABLE pregunta por esta tarjeta (cuándo llega, cómo funciona, si es real, etc.), confirma con seguridad: "Sí, incluido en tu cambio — en cuanto se active la nueva tarifa, Carrefour te envía la tarjeta regalo de 50€ directamente a tu domicilio. No tienes que hacer nada más." No inventes plazos exactos de días salvo que se te indique. Si el cliente pregunta y tú sabes que su informe NO es Iberdrola ESTABLE, no menciones esta promoción.`;
 
 // ─── RESPONDER MENSAJE ────────────────────────────────────────────────────────
 
@@ -154,10 +154,10 @@ async function responderMensaje(historial, mensajeUsuario, contratosCtx = null, 
     const tieneCarrefour = todosInformes.some(inf => {
       const comp = (inf.nueva_compania || '').toLowerCase();
       const tar  = (inf.nueva_tarifa  || '').toLowerCase();
-      return comp.includes('iberdrola') && tar.includes('impulsa');
+      return comp.includes('iberdrola') && (tar.includes('estable') || tar.includes('impulsa'));
     });
     if (tieneCarrefour) {
-      ctx += '\n\nPROMOCIÓN ACTIVA PARA ESTE CLIENTE: Su informe incluye la tarifa Iberdrola · Impulsa 24h con la promoción de Tarjeta Regalo Carrefour de 50€. Si pregunta por ella, confirma con total seguridad que la recibirá en su domicilio automáticamente tras activar el cambio. No tiene que hacer nada extra.';
+      ctx += '\n\nPROMOCIÓN ACTIVA PARA ESTE CLIENTE: Su informe incluye la tarifa Iberdrola · ESTABLE con la promoción de Tarjeta Regalo Carrefour de 50€. Si pregunta por ella, confirma con total seguridad que la recibirá en su domicilio automáticamente tras activar el cambio. No tiene que hacer nada extra.';
     }
 
     systemPrompt += ctx;
