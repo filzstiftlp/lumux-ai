@@ -408,7 +408,7 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     // Sin CUPS la factura no se puede procesar ni asociar a un suministro
     console.warn(`[CUPS] Factura sin CUPS. Usuario: ${usuario.id}`);
     return {
-      respuesta: `⚙️ Estamos actualizando nuestra herramienta de análisis.\n\nEn breve uno de nuestros asesores revisará tu factura y te enviará tu comparativa personalizada.\n\n¿Tienes alguna duda? Llámanos directamente por este WhatsApp 📞`,
+      respuesta: `⚙️ Estamos actualizando nuestra herramienta de análisis.\n\nEn breve uno de nuestros asesores revisará tu factura y te enviará tu comparativa personalizada.\n\n¿Tienes alguna duda? Puedes llamarnos por teléfono al número de este WhatsApp 📞`,
       metadata: { sin_cups: true }
     };
   }
@@ -735,6 +735,14 @@ router.post('/whatsapp', async (req, res) => {
       await db.guardarMensaje(usuario.id, 'user', '[Factura enviada]', { archivoUrl });
       cancelarRecordatorios(from);
       cancelarTraspasos(from); // cliente activo, cancelar timers de traspaso
+      // Nota privada de respaldo para nuevo contacto que manda factura directamente
+      if (chatwootConvId && chatwootConvNueva) {
+        await enviarMensajeChatwoot(
+          chatwootConvId,
+          `📋 *PRIMER CONTACTO*\n👤 *Cliente:* ${nombre || from}\n📱 *Teléfono:* +${from}\n📎 *Primer mensaje:* envió directamente ${tipo === 'archivo' ? 'un PDF' : 'una imagen'} (factura)`,
+          true
+        );
+      }
       await enviarMensajeWhatsApp(from, '⏳ Estoy analizando tu factura, dame un momento...');
       const imageResponse = await axios.get(archivoUrl, { responseType: 'arraybuffer', headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } });
       const fileBuffer = Buffer.from(imageResponse.data);
