@@ -127,18 +127,39 @@ Tu informe con el ahorro pasando a *${compania}* sigue disponible. Solo rellena 
 // ─── CHATWOOT: HELPERS DE CONTACTO / CONVERSACIÓN / ASIGNACIÓN ───────────────
 
 async function getChatwootContactId(phone, nombre) {
+  const base = { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } };
+  const buscar = async () => {
+    const res = await axios.get(
+      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts/search?q=${encodeURIComponent(phone)}`, base
+    );
+    const lista = res.data?.payload?.contacts || res.data?.payload || [];
+    // Buscar coincidencia exacta de teléfono
+    const exacto = lista.find(c =>
+      c.phone_number?.replace(/\D/g, '').endsWith(phone) ||
+      String(c.phone_number || '').includes(phone)
+    );
+    return exacto?.id || (lista.length > 0 ? lista[0].id : null);
+  };
   try {
-    const base = { headers: { api_access_token: process.env.CHATWOOT_API_TOKEN } };
-    const searchRes = await axios.get(
-      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts/search?q=${phone}`, base
-    );
-    const contacts = searchRes.data?.payload?.contacts || searchRes.data?.payload || [];
-    if (contacts.length > 0) return contacts[0].id;
-    const createRes = await axios.post(
-      `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts`,
-      { name: nombre || phone, phone_number: `+${phone}` }, base
-    );
-    return createRes.data?.id || createRes.data?.payload?.id;
+    // 1. Buscar primero
+    const idExistente = await buscar();
+    if (idExistente) return idExistente;
+    // 2. Crear
+    try {
+      const createRes = await axios.post(
+        `${process.env.CHATWOOT_URL}/api/v1/accounts/1/contacts`,
+        { name: nombre || phone, phone_number: `+${phone}` }, base
+      );
+      const idCreado = createRes.data?.id || createRes.data?.payload?.id;
+      if (idCreado) return idCreado;
+    } catch (createErr) {
+      console.warn('[Chatwoot] Creación falló, reintentando búsqueda:', createErr.message);
+    }
+    // 3. Si creación falló (duplicado/race condition), buscar de nuevo
+    const idReintentar = await buscar();
+    if (idReintentar) return idReintentar;
+    console.error('[Chatwoot] No se pudo obtener contactId para:', phone);
+    return null;
   } catch (e) { console.error('Chatwoot contact error:', e.message); return null; }
 }
 
