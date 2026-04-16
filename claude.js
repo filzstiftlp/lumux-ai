@@ -231,15 +231,15 @@ CAMPOS REQUERIDOS:
   "consumo_p2_kwh": kWh en periodo llano (P2) o null,
   "consumo_p3_kwh": kWh en periodo valle (P3) o null,
   "potencia_kw": potencia contratada en kW (P1),
-  "precio_kwh": precio medio €/kWh = importe_total_energia / consumo_total_kwh,
+  "precio_kwh": precio medio ponderado €/kWh = importe_total_energia / consumo_total_kwh. IMPORTANTE: algunas facturas tienen DOS O MÁS subperiodos con precios distintos dentro del mismo período de facturación (por ejemplo Naturgy cambia precio a mitad de mes). En ese caso SUMA todos los importes de energía de todos los subperiodos y DIVIDE entre el consumo total. Ejemplo: 166kWh×0.1207 + 289kWh×0.1429 = 20.03+41.30 = 61.33€ / 455kWh = 0.1348 €/kWh,
   "precio_kwh_p1": precio €/kWh del periodo P1 o null,
   "precio_kwh_p2": precio €/kWh del periodo P2 o null,
   "precio_kwh_p3": precio €/kWh del periodo P3 o null,
-  "precio_potencia_dia": precio €/kW/día de potencia P1 (precio unitario, NO importe total),
-  "precio_potencia_dia_p2": precio €/kW/día de potencia P2 o null,
+  "precio_potencia_dia": precio €/kW/día de potencia P1 (precio unitario, NO importe total). Si hay varios subperiodos con el mismo o distinto precio, usa el precio del subperiodo MÁS RECIENTE (el vigente actualmente),
+  "precio_potencia_dia_p2": precio €/kW/día de potencia P2 o null. Igual que P1, usa el precio del subperiodo más reciente,
   "importe_energia": importe total en € solo de energía (sin impuestos ni potencia),
   "importe_potencia": importe total en € solo de potencia (sin impuestos),
-  "precio_total": ⚠️ CRÍTICO: USA el subtotal de electricidad ANTES de descuentos promocionales temporales. Si la factura muestra líneas separadas como "PARA TI", "Descuento bienvenida", "Dto. fidelización", "Bonificación comercial" u otras FUERA del bloque estándar de Descuentos de tarifa, IGNÓRALAS COMPLETAMENTE. Usa el importe JUSTO antes de esas líneas adicionales. EJEMPLO: si aparece "TOTAL ELECTRICIDAD 46,59€" luego "PARA TI -20,00€" luego "TOTAL A PAGAR 32,37€", entonces precio_total = 46.59 (NO 32.37),
+  "precio_total": ⚠️ CRÍTICO: Usa el importe "TOTAL A PAGAR" final de la factura, que es el importe CON IVA incluido (el número más grande y destacado). Este valor ya incluye IVA, impuesto eléctrico y todos los conceptos. EXCEPCIÓN: si la factura muestra descuentos PROMOCIONALES adicionales fuera del bloque estándar (líneas como "PARA TI", "Descuento bienvenida", "Bonificación comercial"), ignóralas y usa el importe ANTES de esos descuentos extra. EJEMPLO correcto: si aparece "TOTAL ELECTRICIDAD 92,63€" + "IVA 9,26€" + "TOTAL A PAGAR 101,89€" → precio_total = 101.89. EJEMPLO con descuento promo: si aparece "TOTAL ELECTRICIDAD 46,59€" luego "PARA TI -20,00€" luego "TOTAL A PAGAR 32,37€" → precio_total = 46.59 (ignorar el descuento promo),
   "descuento_energia_pct": porcentaje de descuento contractual/fidelización sobre la energía si aparece explícito en la factura (ej: 10 para un "10% DTO" o "Dto. fidelización 10%"). Solo si es un descuento CONTRACTUAL permanente sobre el consumo, NO descuentos puntuales tipo "PARA TI". null si no hay descuento contractual,
   "importe_energia_sin_descuento": importe de energía ANTES de aplicar descuento_energia_pct (null si no hay descuento contractual),
   "cups": "código CUPS" o null,
@@ -316,7 +316,8 @@ function calcularCosteTarifa(tarifa, consumoTotal, consumoP1, consumoP2, consumo
     descuentoBV = (excedentesKwh * factor) * precioExcedentes;
   }
 
-  return (costeEnergia + costePotencia + (tarifa.precio_fijo_mes || 0) - descuentoBV) * 1.2611;
+  // IVA 10% × Impuesto Eléctrico 0,5% = 1,1055 (tasas vigentes en España 2025-2026)
+  return (costeEnergia + costePotencia + (tarifa.precio_fijo_mes || 0) - descuentoBV) * 1.1055;
 }
 
 async function generarComparativa(datosFactura, tarifas) {
