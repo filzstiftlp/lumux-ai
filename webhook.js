@@ -718,14 +718,6 @@ router.post('/whatsapp', async (req, res) => {
         if (chatwootConvId) {
           if (tipo === 'texto') {
             await enviarMensajeChatwoot(chatwootConvId, mensajeTexto, false);
-            // ── Nota privada de respaldo para nuevo contacto ──────────────────
-            if (chatwootConvNueva) {
-              await enviarMensajeChatwoot(
-                chatwootConvId,
-                `📋 *PRIMER CONTACTO*\n👤 *Cliente:* ${nombre || from}\n📱 *Teléfono:* +${from}\n💬 *Mensaje:* ${mensajeTexto}`,
-                true
-              );
-            }
           }
           // Los archivos se registran más abajo cuando ya tenemos el buffer descargado
         }
@@ -756,14 +748,6 @@ router.post('/whatsapp', async (req, res) => {
       await db.guardarMensaje(usuario.id, 'user', '[Factura enviada]', { archivoUrl });
       cancelarRecordatorios(from);
       cancelarTraspasos(from); // cliente activo, cancelar timers de traspaso
-      // Nota privada de respaldo para nuevo contacto que manda factura directamente
-      if (chatwootConvId && chatwootConvNueva) {
-        await enviarMensajeChatwoot(
-          chatwootConvId,
-          `📋 *PRIMER CONTACTO*\n👤 *Cliente:* ${nombre || from}\n📱 *Teléfono:* +${from}\n📎 *Primer mensaje:* envió directamente ${tipo === 'archivo' ? 'un PDF' : 'una imagen'} (factura)`,
-          true
-        );
-      }
       await enviarMensajeWhatsApp(from, '⏳ Estoy analizando tu factura, dame un momento...');
       const imageResponse = await axios.get(archivoUrl, { responseType: 'arraybuffer', headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } });
       const fileBuffer = Buffer.from(imageResponse.data);
@@ -803,14 +787,6 @@ router.post('/whatsapp', async (req, res) => {
       await db.guardarMensaje(usuario.id, 'assistant', respuesta, metadata);
       await enviarMensajeWhatsApp(from, respuesta);
       if (chatwootConvId) await enviarMensajeChatwoot(chatwootConvId, respuesta, true);
-      // Nota de respaldo: primera respuesta del bot en conversación nueva
-      if (chatwootConvId && chatwootConvNueva) {
-        await enviarMensajeChatwoot(
-          chatwootConvId,
-          `🤖 *PRIMERA RESPUESTA BOT:* ${respuesta}`,
-          true
-        );
-      }
     } else {
       // respuesta === null → plantilla de informe enviada
       const nota = `📊 Informe enviado con botón | ID: ${metadata.short_id} | URL: ${metadata.url_informe}`;
