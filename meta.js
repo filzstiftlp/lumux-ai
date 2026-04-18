@@ -73,12 +73,16 @@ async function enviarEventoCAPI({
     country: [hash('es')],
   };
 
-  // ← NUEVO: Añadir WABA_ID y ctwa_clid si están disponibles
+  // ← NUEVO: Añadir WABA_ID, page_id y ctwa_clid si están disponibles
   if (WABA_ID) {
     userData.whatsapp_business_account_id = WABA_ID;
   }
   if (ctwaClid) {
     userData.ctwa_clid = ctwaClid;  // ← CRÍTICO: mejora atribución 10x
+  }
+  // page_id requerido para LeadSubmitted en WhatsApp Business
+  if (eventName === 'LeadSubmitted') {
+    userData.page_id = process.env.META_PAGE_ID || '120243072954600176';
   }
 
   const event = {
