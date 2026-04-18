@@ -2,8 +2,8 @@
  * meta.js — Lumux AI · Meta Conversions API (CAPI)
  *
  * Eventos que envía:
- *   Lead        → cuando un usuario manda su primera factura y se genera informe
- *   Purchase    → cuando firma el contrato (conversión real)
+ *   LeadSubmitted → cuando un usuario manda su primera factura y se genera informe
+ *   Purchase      → cuando firma el contrato (conversión real)
  *
  * Variables de entorno necesarias en Railway:
  *   META_DATASET_ID     → ID del Dataset (1495964632242966)
@@ -113,7 +113,7 @@ async function enviarEventoCAPI({
 // ─── Eventos públicos ─────────────────────────────────────────────────────────
 
 /**
- * Lead — se llama cuando se genera el informe con ahorro.
+ * LeadSubmitted — se llama cuando se genera el informe con ahorro.
  * Meta aprende quién envía facturas y qué perfil tiene.
  *
  * @param {string} telefono      Teléfono del usuario (WhatsApp)
@@ -125,7 +125,7 @@ async function enviarEventoCAPI({
  */
 async function enviarLead({ telefono, nombre, ciudad, codigoPostal, ctwaClid, ahorro }) {
   await enviarEventoCAPI({
-    eventName: 'Lead',
+    eventName: 'LeadSubmitted',
     telefono,
     nombre,
     ciudad,
