@@ -39,15 +39,22 @@ function normalizarTelefono(tel) {
 
 // ─── Envío genérico a CAPI ────────────────────────────────────────────────────
 
-async function enviarEventoCAPI({ eventName, telefono, email, valor, moneda = 'EUR', customData = {} }) {
+async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, moneda = 'EUR', customData = {} }) {
   if (!PIXEL_ID || !ACCESS_TOKEN) {
     console.warn('[META CAPI] Variables META_PIXEL_ID / META_ACCESS_TOKEN no configuradas. Evento omitido.');
     return;
   }
 
+  // Separar nombre en fn (first name) y ln (last name) si es posible
+  const partes = (nombre || '').trim().split(/\s+/);
+  const fn = partes[0] || null;
+  const ln = partes.length > 1 ? partes.slice(1).join(' ') : null;
+
   const userData = {
     ph: [hash(normalizarTelefono(telefono))].filter(Boolean),
     em: [hash(email)].filter(Boolean),
+    fn: [hash(fn)].filter(Boolean),
+    ln: [hash(ln)].filter(Boolean),
     country: [hash('es')],
   };
 
@@ -55,6 +62,7 @@ async function enviarEventoCAPI({ eventName, telefono, email, valor, moneda = 'E
     event_name:       eventName,
     event_time:       Math.floor(Date.now() / 1000),
     action_source:    'business_messaging',  // eventos que ocurren via WhatsApp Business
+    messaging_channel: 'whatsapp',           // ← CRÍTICO: identifica el canal como WhatsApp
     user_data:        userData,
     custom_data:      {
       currency: moneda,
@@ -88,10 +96,11 @@ async function enviarEventoCAPI({ eventName, telefono, email, valor, moneda = 'E
  * @param {string} telefono   Teléfono del usuario (WhatsApp)
  * @param {number} ahorro     Ahorro anual estimado en €
  */
-async function enviarLead({ telefono, ahorro }) {
+async function enviarLead({ telefono, nombre, ahorro }) {
   await enviarEventoCAPI({
     eventName:  'Lead',
     telefono,
+    nombre,
     customData: {
       content_name: 'informe_ahorro_energia',
       ...(ahorro ? { predicted_ltv: ahorro } : {}),
@@ -108,11 +117,12 @@ async function enviarLead({ telefono, ahorro }) {
  * @param {number} ahorroAnual  Ahorro anual en € (valor de la conversión para Meta)
  * @param {string} compania     Compañía nueva contratada
  */
-async function enviarPurchase({ telefono, email, ahorroAnual, compania }) {
+async function enviarPurchase({ telefono, email, nombre, ahorroAnual, compania }) {
   await enviarEventoCAPI({
     eventName:  'Purchase',
     telefono,
     email,
+    nombre,
     valor:      ahorroAnual || 0,   // Meta usa esto para optimizar por valor
     customData: {
       content_name:     'contrato_firmado',

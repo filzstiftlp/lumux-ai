@@ -573,7 +573,7 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     await db.programarRemarketing(usuario.id, oferta.id, 3, 'seguimiento_oferta');
 
     // ─── META CAPI: Lead ──────────────────────────────────────────────────────
-    meta.enviarLead({ telefono, ahorro: comparativa.ahorro }).catch(() => {});
+    meta.enviarLead({ telefono, nombre: usuario.nombre, ahorro: comparativa.ahorro }).catch(() => {});
     // ─── TIKTOK CAPI: Lead ────────────────────────────────────────────────────
     tiktok.enviarLead({ telefono, ahorro: comparativa.ahorro }).catch(() => {});
     cancelarRecordatorios(telefono);
@@ -986,6 +986,7 @@ router.post('/contrato', async (req, res) => {
       meta.enviarPurchase({
         telefono: informeData?.telefono,
         email,
+        nombre:      nombreReal,
         ahorroAnual: ahorro_anual,
         compania:    nueva_compania,
       }).catch(() => {});
