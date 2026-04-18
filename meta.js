@@ -87,8 +87,8 @@ async function enviarEventoCAPI({
     event_name:        eventName,
     event_time:        Math.floor(Date.now() / 1000),
     // Si viene de anuncio (tiene ctwa_clid) → business_messaging
-    // Si es orgánico → other
-    action_source:     ctwaClid ? 'business_messaging' : 'other',
+    // Si es orgánico → system_generated (eventos backend/bot)
+    action_source:     ctwaClid ? 'business_messaging' : 'system_generated',
     user_data:         userData,
     custom_data:       {
       currency: moneda,
