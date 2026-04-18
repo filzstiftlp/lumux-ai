@@ -68,21 +68,17 @@ async function enviarEventoCAPI({
     em: [hash(email)].filter(Boolean),
     fn: [hash(fn)].filter(Boolean),
     ln: [hash(ln)].filter(Boolean),
-    ct: [hash(ciudad)].filter(Boolean),      // ← NUEVO: ciudad
-    zp: [hash(codigoPostal)].filter(Boolean), // ← NUEVO: código postal
+    ct: [hash(ciudad)].filter(Boolean),
+    zp: [hash(codigoPostal)].filter(Boolean),
     country: [hash('es')],
   };
 
-  // ← NUEVO: Añadir WABA_ID, page_id y ctwa_clid si están disponibles
+  // Añadir WABA_ID y ctwa_clid si están disponibles
   if (WABA_ID) {
     userData.whatsapp_business_account_id = WABA_ID;
   }
   if (ctwaClid) {
-    userData.ctwa_clid = ctwaClid;  // ← CRÍTICO: mejora atribución 10x
-  }
-  // page_id requerido para LeadSubmitted en WhatsApp Business
-  if (eventName === 'LeadSubmitted') {
-    userData.page_id = process.env.META_PAGE_ID || '120243072954600176';
+    userData.ctwa_clid = ctwaClid;
   }
 
   const event = {
@@ -117,7 +113,7 @@ async function enviarEventoCAPI({
 // ─── Eventos públicos ─────────────────────────────────────────────────────────
 
 /**
- * LeadSubmitted — se llama cuando se genera el informe con ahorro.
+ * Lead (enviado como Purchase) — se llama cuando se genera el informe con ahorro.
  * Meta aprende quién envía facturas y qué perfil tiene.
  *
  * @param {string} telefono      Teléfono del usuario (WhatsApp)
@@ -129,14 +125,16 @@ async function enviarEventoCAPI({
  */
 async function enviarLead({ telefono, nombre, ciudad, codigoPostal, ctwaClid, ahorro }) {
   await enviarEventoCAPI({
-    eventName: 'LeadSubmitted',
+    eventName: 'Purchase',
     telefono,
     nombre,
     ciudad,
     codigoPostal,
     ctwaClid,
+    valor: 1,  // valor simbólico para diferenciar de Purchase real
     customData: {
       content_name: 'informe_ahorro_energia',
+      content_category: 'lead',
       ...(ahorro ? { predicted_ltv: ahorro } : {}),
     },
   });
