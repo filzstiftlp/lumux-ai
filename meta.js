@@ -2,22 +2,20 @@
  * meta.js — Lumux AI · Meta Conversions API (CAPI)
  *
  * Eventos que envía:
- *   LeadSubmitted → cuando un usuario manda su primera factura y se genera informe
- *   Purchase      → cuando firma el contrato (conversión real)
+ *   Lead        → cuando un usuario manda su primera factura y se genera informe
+ *   Purchase    → cuando firma el contrato (conversión real)
  *
  * Variables de entorno necesarias en Railway:
- *   META_DATASET_ID     → ID del Dataset (1495964632242966)
+ *   META_PIXEL_ID       → número de 15 dígitos de tu Píxel (1495964632242966)
  *   META_ACCESS_TOKEN   → token generado en Events Manager › CAPI › Generar token
- *   META_WABA_ID        → WhatsApp Business Account ID (1641263713730018)
  */
 
 const crypto = require('crypto');
 const axios  = require('axios');
 
-const DATASET_ID   = process.env.META_DATASET_ID || '1495964632242966';
+const PIXEL_ID    = process.env.META_PIXEL_ID || '1495964632242966';
 const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
-const WABA_ID      = process.env.META_WABA_ID;
-const CAPI_URL     = `https://graph.facebook.com/v19.0/${DATASET_ID}/events`;
+const CAPI_URL    = `https://graph.facebook.com/v19.0/${PIXEL_ID}/events`;
 
 // ─── Utilidades ───────────────────────────────────────────────────────────────
 
@@ -41,20 +39,9 @@ function normalizarTelefono(tel) {
 
 // ─── Envío genérico a CAPI ────────────────────────────────────────────────────
 
-async function enviarEventoCAPI({ 
-  eventName, 
-  telefono, 
-  email, 
-  nombre, 
-  ciudad,         // ← NUEVO: para mejor matching
-  codigoPostal,   // ← NUEVO: para mejor matching
-  ctwaClid,       // ← NUEVO: Click ID del anuncio de WhatsApp
-  valor, 
-  moneda = 'EUR', 
-  customData = {} 
-}) {
-  if (!DATASET_ID || !ACCESS_TOKEN) {
-    console.warn('[META CAPI] Variables META_DATASET_ID / META_ACCESS_TOKEN no configuradas. Evento omitido.');
+async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, moneda = 'EUR', customData = {} }) {
+  if (!PIXEL_ID || !ACCESS_TOKEN) {
+    console.warn('[META CAPI] Variables META_PIXEL_ID / META_ACCESS_TOKEN no configuradas. Evento omitido.');
     return;
   }
 
@@ -68,27 +55,13 @@ async function enviarEventoCAPI({
     em: [hash(email)].filter(Boolean),
     fn: [hash(fn)].filter(Boolean),
     ln: [hash(ln)].filter(Boolean),
-    ct: [hash(ciudad)].filter(Boolean),
-    zp: [hash(codigoPostal)].filter(Boolean),
     country: [hash('es')],
   };
-
-  // Añadir WABA_ID y ctwa_clid si están disponibles
-  if (WABA_ID) {
-    userData.whatsapp_business_account_id = WABA_ID;
-  }
-  if (ctwaClid) {
-    userData.ctwa_clid = ctwaClid;
-    // page_id solo es necesario para business_messaging
-    userData.page_id = process.env.META_PAGE_ID || '120243072954600176';
-  }
 
   const event = {
     event_name:        eventName,
     event_time:        Math.floor(Date.now() / 1000),
-    // Si viene de anuncio (tiene ctwa_clid) → business_messaging
-    // Si es orgánico → system_generated (eventos backend/bot)
-    action_source:     ctwaClid ? 'business_messaging' : 'system_generated',
+    action_source:     'website',  // eventos web (más compatible que business_messaging)
     user_data:         userData,
     custom_data:       {
       currency: moneda,
@@ -96,11 +69,6 @@ async function enviarEventoCAPI({
       ...(valor !== undefined ? { value: valor } : {}),
     },
   };
-
-  // Solo añadir messaging_channel si es business_messaging
-  if (ctwaClid) {
-    event.messaging_channel = 'whatsapp';
-  }
 
   try {
     const res = await axios.post(
@@ -121,28 +89,20 @@ async function enviarEventoCAPI({
 // ─── Eventos públicos ─────────────────────────────────────────────────────────
 
 /**
- * Lead (enviado como Purchase) — se llama cuando se genera el informe con ahorro.
+ * Lead — se llama cuando se genera el informe con ahorro.
  * Meta aprende quién envía facturas y qué perfil tiene.
  *
- * @param {string} telefono      Teléfono del usuario (WhatsApp)
- * @param {string} nombre        Nombre del usuario
- * @param {string} ciudad        Ciudad (opcional, mejora matching)
- * @param {string} codigoPostal  Código postal (opcional, mejora matching)
- * @param {string} ctwaClid      Click ID de anuncio WhatsApp (si viene de anuncio)
- * @param {number} ahorro        Ahorro anual estimado en €
+ * @param {string} telefono   Teléfono del usuario (WhatsApp)
+ * @param {string} nombre     Nombre del usuario
+ * @param {number} ahorro     Ahorro anual estimado en €
  */
-async function enviarLead({ telefono, nombre, ciudad, codigoPostal, ctwaClid, ahorro }) {
+async function enviarLead({ telefono, nombre, ahorro }) {
   await enviarEventoCAPI({
-    eventName: 'Purchase',
+    eventName:  'Lead',
     telefono,
     nombre,
-    ciudad,
-    codigoPostal,
-    ctwaClid,
-    valor: 1,  // valor simbólico para diferenciar de Purchase real
     customData: {
       content_name: 'informe_ahorro_energia',
-      content_category: 'lead',
       ...(ahorro ? { predicted_ltv: ahorro } : {}),
     },
   });
@@ -152,25 +112,19 @@ async function enviarLead({ telefono, nombre, ciudad, codigoPostal, ctwaClid, ah
  * Purchase — se llama cuando el cliente firma el contrato.
  * Es la conversión real que Meta necesita para optimizar.
  *
- * @param {string} telefono      Teléfono del usuario
- * @param {string} email         Email del firmante
- * @param {string} nombre        Nombre del firmante
- * @param {string} ciudad        Ciudad (opcional, mejora matching)
- * @param {string} codigoPostal  Código postal (opcional, mejora matching)
- * @param {string} ctwaClid      Click ID de anuncio WhatsApp (si viene de anuncio)
- * @param {number} ahorroAnual   Ahorro anual en € (valor de la conversión para Meta)
- * @param {string} compania      Compañía nueva contratada
+ * @param {string} telefono     Teléfono del usuario
+ * @param {string} email        Email del firmante
+ * @param {string} nombre       Nombre del firmante
+ * @param {number} ahorroAnual  Ahorro anual en € (valor de la conversión para Meta)
+ * @param {string} compania     Compañía nueva contratada
  */
-async function enviarPurchase({ telefono, email, nombre, ciudad, codigoPostal, ctwaClid, ahorroAnual, compania }) {
+async function enviarPurchase({ telefono, email, nombre, ahorroAnual, compania }) {
   await enviarEventoCAPI({
-    eventName: 'Purchase',
+    eventName:  'Purchase',
     telefono,
     email,
     nombre,
-    ciudad,
-    codigoPostal,
-    ctwaClid,
-    valor: ahorroAnual || 0,   // Meta usa esto para optimizar por valor
+    valor:      ahorroAnual || 0,   // Meta usa esto para optimizar por valor
     customData: {
       content_name:     'contrato_firmado',
       content_category: 'energia',
