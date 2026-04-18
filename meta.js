@@ -6,16 +6,18 @@
  *   Purchase    → cuando firma el contrato (conversión real)
  *
  * Variables de entorno necesarias en Railway:
- *   META_PIXEL_ID       → número de 15 dígitos de tu Píxel
+ *   META_DATASET_ID     → ID del Dataset (1495964632242966)
  *   META_ACCESS_TOKEN   → token generado en Events Manager › CAPI › Generar token
+ *   META_WABA_ID        → WhatsApp Business Account ID (1641263713730018)
  */
 
 const crypto = require('crypto');
 const axios  = require('axios');
 
-const PIXEL_ID    = process.env.META_PIXEL_ID;
+const DATASET_ID   = process.env.META_DATASET_ID || '1495964632242966';
 const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
-const CAPI_URL    = `https://graph.facebook.com/v19.0/${PIXEL_ID}/events`;
+const WABA_ID      = process.env.META_WABA_ID;
+const CAPI_URL     = `https://graph.facebook.com/v19.0/${DATASET_ID}/events`;
 
 // ─── Utilidades ───────────────────────────────────────────────────────────────
 
@@ -39,9 +41,20 @@ function normalizarTelefono(tel) {
 
 // ─── Envío genérico a CAPI ────────────────────────────────────────────────────
 
-async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, moneda = 'EUR', customData = {} }) {
-  if (!PIXEL_ID || !ACCESS_TOKEN) {
-    console.warn('[META CAPI] Variables META_PIXEL_ID / META_ACCESS_TOKEN no configuradas. Evento omitido.');
+async function enviarEventoCAPI({ 
+  eventName, 
+  telefono, 
+  email, 
+  nombre, 
+  ciudad,         // ← NUEVO: para mejor matching
+  codigoPostal,   // ← NUEVO: para mejor matching
+  ctwaClid,       // ← NUEVO: Click ID del anuncio de WhatsApp
+  valor, 
+  moneda = 'EUR', 
+  customData = {} 
+}) {
+  if (!DATASET_ID || !ACCESS_TOKEN) {
+    console.warn('[META CAPI] Variables META_DATASET_ID / META_ACCESS_TOKEN no configuradas. Evento omitido.');
     return;
   }
 
@@ -55,16 +68,26 @@ async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, mon
     em: [hash(email)].filter(Boolean),
     fn: [hash(fn)].filter(Boolean),
     ln: [hash(ln)].filter(Boolean),
+    ct: [hash(ciudad)].filter(Boolean),      // ← NUEVO: ciudad
+    zp: [hash(codigoPostal)].filter(Boolean), // ← NUEVO: código postal
     country: [hash('es')],
   };
 
+  // ← NUEVO: Añadir WABA_ID y ctwa_clid si están disponibles
+  if (WABA_ID) {
+    userData.whatsapp_business_account_id = WABA_ID;
+  }
+  if (ctwaClid) {
+    userData.ctwa_clid = ctwaClid;  // ← CRÍTICO: mejora atribución 10x
+  }
+
   const event = {
-    event_name:       eventName,
-    event_time:       Math.floor(Date.now() / 1000),
-    action_source:    'business_messaging',  // eventos que ocurren via WhatsApp Business
-    messaging_channel: 'whatsapp',           // ← CRÍTICO: identifica el canal como WhatsApp
-    user_data:        userData,
-    custom_data:      {
+    event_name:        eventName,
+    event_time:        Math.floor(Date.now() / 1000),
+    action_source:     'business_messaging',  // eventos que ocurren via WhatsApp Business
+    messaging_channel: 'whatsapp',            // identifica el canal como WhatsApp
+    user_data:         userData,
+    custom_data:       {
       currency: moneda,
       ...customData,
       ...(valor !== undefined ? { value: valor } : {}),
@@ -93,14 +116,21 @@ async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, mon
  * Lead — se llama cuando se genera el informe con ahorro.
  * Meta aprende quién envía facturas y qué perfil tiene.
  *
- * @param {string} telefono   Teléfono del usuario (WhatsApp)
- * @param {number} ahorro     Ahorro anual estimado en €
+ * @param {string} telefono      Teléfono del usuario (WhatsApp)
+ * @param {string} nombre        Nombre del usuario
+ * @param {string} ciudad        Ciudad (opcional, mejora matching)
+ * @param {string} codigoPostal  Código postal (opcional, mejora matching)
+ * @param {string} ctwaClid      Click ID de anuncio WhatsApp (si viene de anuncio)
+ * @param {number} ahorro        Ahorro anual estimado en €
  */
-async function enviarLead({ telefono, nombre, ahorro }) {
+async function enviarLead({ telefono, nombre, ciudad, codigoPostal, ctwaClid, ahorro }) {
   await enviarEventoCAPI({
-    eventName:  'Lead',
+    eventName: 'Lead',
     telefono,
     nombre,
+    ciudad,
+    codigoPostal,
+    ctwaClid,
     customData: {
       content_name: 'informe_ahorro_energia',
       ...(ahorro ? { predicted_ltv: ahorro } : {}),
@@ -112,18 +142,25 @@ async function enviarLead({ telefono, nombre, ahorro }) {
  * Purchase — se llama cuando el cliente firma el contrato.
  * Es la conversión real que Meta necesita para optimizar.
  *
- * @param {string} telefono     Teléfono del usuario
- * @param {string} email        Email del firmante
- * @param {number} ahorroAnual  Ahorro anual en € (valor de la conversión para Meta)
- * @param {string} compania     Compañía nueva contratada
+ * @param {string} telefono      Teléfono del usuario
+ * @param {string} email         Email del firmante
+ * @param {string} nombre        Nombre del firmante
+ * @param {string} ciudad        Ciudad (opcional, mejora matching)
+ * @param {string} codigoPostal  Código postal (opcional, mejora matching)
+ * @param {string} ctwaClid      Click ID de anuncio WhatsApp (si viene de anuncio)
+ * @param {number} ahorroAnual   Ahorro anual en € (valor de la conversión para Meta)
+ * @param {string} compania      Compañía nueva contratada
  */
-async function enviarPurchase({ telefono, email, nombre, ahorroAnual, compania }) {
+async function enviarPurchase({ telefono, email, nombre, ciudad, codigoPostal, ctwaClid, ahorroAnual, compania }) {
   await enviarEventoCAPI({
-    eventName:  'Purchase',
+    eventName: 'Purchase',
     telefono,
     email,
     nombre,
-    valor:      ahorroAnual || 0,   // Meta usa esto para optimizar por valor
+    ciudad,
+    codigoPostal,
+    ctwaClid,
+    valor: ahorroAnual || 0,   // Meta usa esto para optimizar por valor
     customData: {
       content_name:     'contrato_firmado',
       content_category: 'energia',
