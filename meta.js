@@ -79,13 +79,16 @@ async function enviarEventoCAPI({
   }
   if (ctwaClid) {
     userData.ctwa_clid = ctwaClid;
+    // page_id solo es necesario para business_messaging
+    userData.page_id = process.env.META_PAGE_ID || '120243072954600176';
   }
 
   const event = {
     event_name:        eventName,
     event_time:        Math.floor(Date.now() / 1000),
-    action_source:     'business_messaging',  // eventos que ocurren via WhatsApp Business
-    messaging_channel: 'whatsapp',            // identifica el canal como WhatsApp
+    // Si viene de anuncio (tiene ctwa_clid) → business_messaging
+    // Si es orgánico → other
+    action_source:     ctwaClid ? 'business_messaging' : 'other',
     user_data:         userData,
     custom_data:       {
       currency: moneda,
@@ -93,6 +96,11 @@ async function enviarEventoCAPI({
       ...(valor !== undefined ? { value: valor } : {}),
     },
   };
+
+  // Solo añadir messaging_channel si es business_messaging
+  if (ctwaClid) {
+    event.messaging_channel = 'whatsapp';
+  }
 
   try {
     const res = await axios.post(
