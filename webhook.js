@@ -378,7 +378,7 @@ async function enviarPlantillaInforme(telefono, nombre, companiaActual, nuevaCom
       type: 'template',
       template: {
         name: 'informe_ahorro_lumux',
-        language: { code: 'es' },
+        language: { code: 'en' },
         components: [
           {
             type: 'body',
