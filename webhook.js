@@ -573,7 +573,7 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     await db.programarRemarketing(usuario.id, oferta.id, 3, 'seguimiento_oferta');
 
     // ─── META CAPI: Lead ──────────────────────────────────────────────────────
-    meta.enviarLead({ telefono, nombre: usuario.nombre, ahorro: comparativa.ahorro }).catch(() => {});
+    meta.enviarLead({ telefono, nombre: usuario.nombre, ahorro: comparativa.ahorro, ctwaClid: usuario.ctwa_clid }).catch(() => {});
     // ─── TIKTOK CAPI: Lead ────────────────────────────────────────────────────
     tiktok.enviarLead({ telefono, ahorro: comparativa.ahorro }).catch(() => {});
     cancelarRecordatorios(telefono);
@@ -724,6 +724,13 @@ router.post('/whatsapp', async (req, res) => {
     const ourPhone = value?.metadata?.display_phone_number?.replace(/[\s+\-()]/g, '');
     if (ourPhone && from === ourPhone) return;
 
+    // ─── CTWA click ID: presente solo si el usuario llegó por anuncio Click-to-WhatsApp ──
+    // Meta lo incluye en msg.referral.ctwa_clid del PRIMER mensaje de la sesión.
+    // Se guarda en usuarios.ctwa_clid y se propaga a todos los eventos CAPI
+    // para cerrar el loop de atribución: clic en anuncio → Lead → Purchase.
+    const ctwaClid = msg.referral?.ctwa_clid || null;
+    if (ctwaClid) console.log(`[CTWA] Click-to-WhatsApp: ${from} | ctwa_clid:${ctwaClid.slice(0,16)}...`);
+
     let tipo = 'texto', mensajeTexto = '', archivoUrl = null, mediaType = null, fileName = null;
     if (msg.type === 'text') { mensajeTexto = msg.text.body; }
     else if (msg.type === 'interactive') {
@@ -741,7 +748,7 @@ router.post('/whatsapp', async (req, res) => {
     else if (msg.type === 'document') { tipo = 'archivo'; archivoUrl = await getMediaUrl(msg.document.id); mediaType = msg.document.mime_type || 'application/pdf'; fileName = msg.document.filename || `factura_${Date.now()}.pdf`; }
     else return;
 
-    const usuario = await db.getOrCreateUsuario(from, { nombre, telefono: from, canal: 'whatsapp' });
+    const usuario = await db.getOrCreateUsuario(from, { nombre, telefono: from, canal: 'whatsapp', ctwa_clid: ctwaClid });
     let respuesta = '', metadata = {};
 
     // ─── CHATWOOT: obtener / crear conversación y asignar a Alberto ──────────
@@ -983,12 +990,16 @@ router.post('/contrato', async (req, res) => {
     // ─── BACKGROUND: email + WhatsApp + Meta CAPI (continuación del setImmediate) ─
 
       // ─── META CAPI: Purchase ──────────────────────────────────────────────
+      // ctwa_clid: recuperar del usuario que originó este informe
+      const { data: usuarioPurchase } = await db.supabase
+        .from('usuarios').select('ctwa_clid').eq('id', informeData.usuario_id).single();
       meta.enviarPurchase({
-        telefono: informeData?.telefono,
+        telefono:    informeData?.telefono,
         email,
         nombre:      nombreReal,
         ahorroAnual: ahorro_anual,
         compania:    nueva_compania,
+        ctwaClid:    usuarioPurchase?.ctwa_clid || null,
       }).catch(() => {});
       // ─── TIKTOK CAPI: Purchase ────────────────────────────────────────────
       tiktok.enviarPurchase({

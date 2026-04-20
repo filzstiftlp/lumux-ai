@@ -17,14 +17,26 @@ async function getOrCreateUsuario(subscriberId, datos = {}) {
       .from('usuarios')
       .insert({
         subscriber_id: subscriberId,
-        nombre: datos.nombre || null,
-        telefono: datos.telefono || null,
-        canal: datos.canal || 'whatsapp',
-        estado: 'inicio'
+        nombre:    datos.nombre    || null,
+        telefono:  datos.telefono  || null,
+        canal:     datos.canal     || 'whatsapp',
+        estado:    'inicio',
+        // ctwa_clid: click ID del anuncio Click-to-WhatsApp (msg.referral.ctwa_clid)
+        // Solo presente en el primer mensaje de usuarios que llegan por anuncio
+        ctwa_clid: datos.ctwa_clid || null,
       })
       .select()
       .single();
     usuario = nuevo;
+  } else if (datos.ctwa_clid && !usuario.ctwa_clid) {
+    // Usuario ya existía pero ahora llega con ctwa_clid (retargeting / sesión nueva desde anuncio)
+    const { data: actualizado } = await supabase
+      .from('usuarios')
+      .update({ ctwa_clid: datos.ctwa_clid, updated_at: new Date().toISOString() })
+      .eq('id', usuario.id)
+      .select()
+      .single();
+    if (actualizado) usuario = actualizado;
   }
   return usuario;
 }
