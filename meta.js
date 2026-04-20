@@ -94,19 +94,22 @@ async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, mon
     ...(ctwaClid ? { ctwa_clid: ctwaClid } : {}),
   };
 
+  // ── action_source dinámico ──────────────────────────────────────────────────
+  // Con ctwa_clid → business_messaging + messaging_channel (ciclo CTWA completo)
+  // Sin ctwa_clid → website (Meta rechaza business_messaging sin ctwa_clid en Purchase,
+  //                          y "Lead" no es nombre válido para business_messaging)
+  const usarMessaging = !!ctwaClid;
+
+  // Para business_messaging Meta exige nombres de evento específicos:
+  //   "Lead" → "LeadSubmitted"   |   "Purchase" → "Purchase" (este sí es válido)
+  const eventNameFinal = usarMessaging && eventName === 'Lead' ? 'LeadSubmitted' : eventName;
+
   const event = {
-    event_name:  eventName,
+    event_name:  eventNameFinal,
     event_time:  Math.floor(Date.now() / 1000),
-
-    // ── CRÍTICO: canal correcto para campañas Click-to-WhatsApp ─────────────
-    // action_source "business_messaging" → Meta sabe que viene de mensajería
-    // messaging_channel "whatsapp"       → especifica el canal dentro de messaging
-    // Sin estos dos campos los eventos no se atribuyen a campañas CTWA
-    action_source:     'business_messaging',
-    messaging_channel: 'whatsapp',
-
+    action_source:     usarMessaging ? 'business_messaging' : 'website',
+    ...(usarMessaging ? { messaging_channel: 'whatsapp' } : {}),
     user_data:   userData,
-
     custom_data: {
       currency: moneda,
       ...customData,
@@ -124,8 +127,8 @@ async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, mon
       }
     );
     console.log(
-      `[META CAPI] ✅ ${eventName} → events_received:${res.data?.events_received}`,
-      ctwaClid ? `| ctwa_clid:${ctwaClid.slice(0, 12)}...` : '| (sin ctwa_clid — usuario no vino de anuncio)'
+      `[META CAPI] ✅ ${eventNameFinal} (${usarMessaging ? 'business_messaging' : 'website'}) → events_received:${res.data?.events_received}`,
+      ctwaClid ? `| ctwa_clid:${ctwaClid.slice(0, 12)}...` : '| (sin ctwa_clid)'
     );
   } catch (err) {
     console.error(`[META CAPI] ❌ Error enviando ${eventName}:`, err.response?.data || err.message);
