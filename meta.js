@@ -186,4 +186,26 @@ async function enviarPurchase({ telefono, email, nombre, ahorroAnual, compania, 
   });
 }
 
-module.exports = { enviarLead, enviarPurchase };
+/**
+ * ConversacionIniciada — se llama cuando el usuario manda su PRIMER mensaje.
+ * Cubre el tramo Clic → Conversación que Meta veía como agujero negro.
+ * Para business_messaging el nombre válido es "InitiateCheckout" no existe,
+ * Meta acepta "Contact" como evento estándar para conversación iniciada.
+ *
+ * @param {string} telefono   Teléfono del usuario
+ * @param {string} nombre     Nombre del usuario
+ * @param {string} [ctwaClid] Click ID del anuncio
+ */
+async function enviarConversacionIniciada({ telefono, nombre, ctwaClid }) {
+  await enviarEventoCAPI({
+    eventName:  'Contact',
+    telefono,
+    nombre,
+    ctwaClid,
+    customData: {
+      content_name: 'conversacion_iniciada_whatsapp',
+    },
+  });
+}
+
+module.exports = { enviarLead, enviarPurchase, enviarConversacionIniciada };

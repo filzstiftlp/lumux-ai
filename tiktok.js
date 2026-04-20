@@ -13,8 +13,8 @@
 const crypto = require('crypto');
 const axios  = require('axios');
 
-const PIXEL_ID    = process.env.TIKTOK_PIXEL_ID;
-const ACCESS_TOKEN = process.env.TIKTOK_ACCESS_TOKEN;
+const PIXEL_ID     = process.env.TIKTOK_PIXEL_ID    || null;
+const ACCESS_TOKEN = process.env.TIKTOK_ACCESS_TOKEN || null;
 const CAPI_URL    = 'https://business-api.tiktok.com/open_api/v1.3/event/track/';
 
 // ─── Utilidades ───────────────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ function normalizarTelefono(tel) {
 
 async function enviarEventoTikTok({ eventName, telefono, email, valor, properties = {} }) {
   if (!PIXEL_ID || !ACCESS_TOKEN) {
-    console.warn('[TIKTOK CAPI] Variables TIKTOK_PIXEL_ID / TIKTOK_ACCESS_TOKEN no configuradas. Evento omitido.');
+    console.warn(`[TIKTOK CAPI] Omitido ${eventName}: TIKTOK_PIXEL_ID o TIKTOK_ACCESS_TOKEN no configurados en Railway.`);
     return;
   }
 

@@ -751,6 +751,14 @@ router.post('/whatsapp', async (req, res) => {
     const usuario = await db.getOrCreateUsuario(from, { nombre, telefono: from, canal: 'whatsapp', ctwa_clid: ctwaClid });
     let respuesta = '', metadata = {};
 
+    // ─── META CAPI: Conversación iniciada ────────────────────────────────────
+    // Solo en el PRIMER mensaje (estado 'inicio' = usuario recien creado).
+    // Cubre el tramo Clic -> Conversacion que Meta veia como agujero negro.
+    // 'Contact' es el nombre estandar de Meta para conversacion/contacto iniciado.
+    if (usuario.estado === 'inicio') {
+      meta.enviarConversacionIniciada({ telefono: from, nombre: usuario.nombre, ctwaClid }).catch(() => {});
+    }
+
     // ─── CHATWOOT: obtener / crear conversación y asignar a Alberto ──────────
     let chatwootConvId = null;
     let chatwootConvNueva = false;
