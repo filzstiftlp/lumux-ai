@@ -588,6 +588,8 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
       respuesta = null;
     } catch (e) {
       console.error('[procesarFactura] Fallback a texto:', e.message);
+      console.error('[procesarFactura] Error completo plantilla:', JSON.stringify(e.response?.data || e.message));
+      console.error('[procesarFactura] PHONE_ID usado:', process.env.WHATSAPP_PHONE_ID);
       respuesta += `\n${urlCorta}`;
     }
 
@@ -757,6 +759,9 @@ router.post('/whatsapp', async (req, res) => {
     // 'Contact' es el nombre estandar de Meta para conversacion/contacto iniciado.
     if (usuario.estado === 'inicio') {
       meta.enviarConversacionIniciada({ telefono: from, nombre: usuario.nombre, ctwaClid }).catch(() => {});
+      // Actualizar estado a 'activo' para que no se dispare Contact en el siguiente mensaje
+      await db.actualizarEstado(usuario.id, 'activo');
+      usuario.estado = 'activo';
     }
 
     // ─── CHATWOOT: obtener / crear conversación y asignar a Alberto ──────────
