@@ -197,13 +197,18 @@ async function enviarPurchase({ telefono, email, nombre, ahorroAnual, compania, 
  * @param {string} [ctwaClid] Click ID del anuncio
  */
 async function enviarConversacionIniciada({ telefono, nombre, ctwaClid }) {
+  // Contact es evento estándar de web — válido para action_source "website".
+  // business_messaging solo acepta "Purchase" y "LeadSubmitted".
+  // Por eso este evento SIEMPRE va como website, pero incluimos ctwa_clid
+  // en custom_data para que Meta pueda correlacionarlo con el clic del anuncio.
   await enviarEventoCAPI({
     eventName:  'Contact',
     telefono,
     nombre,
-    ctwaClid,
+    ctwaClid:   null,   // forzar website — Contact no es válido para business_messaging
     customData: {
       content_name: 'conversacion_iniciada_whatsapp',
+      ...(ctwaClid ? { ctwa_clid_ref: ctwaClid } : {}),  // referencia informativa en custom_data
     },
   });
 }
