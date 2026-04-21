@@ -93,9 +93,13 @@ function programarRecuerdoFactura(telefono) {
       if (!usuario) return;
       const { data: facturas } = await db.supabase.from('facturas').select('id').eq('usuario_id', usuario.id).limit(1);
       if (facturas && facturas.length > 0) return;
-      await enviarMensajeWhatsApp(telefono,
-        '\uD83D\uDC4B \u00A1Oye, que a\u00FAn no me has mandado tu factura! \uD83D\uDE04\n\nEnv\u00EDamela ahora y en segundos te digo exactamente cu\u00E1nto puedes ahorrar. \u26A1 Es gratis y sin compromiso.'
-      );
+      const msgRecuerdoFactura = '\uD83D\uDC4B \u00A1Oye, que a\u00FAn no me has mandado tu factura! \uD83D\uDE04\n\nEnv\u00EDamela ahora y en segundos te digo exactamente cu\u00E1nto puedes ahorrar. \u26A1 Es gratis y sin compromiso.';
+      await enviarMensajeWhatsApp(telefono, msgRecuerdoFactura);
+      // Registrar en Chatwoot
+      try {
+        const cid = await getChatwootContactId(telefono, null);
+        if (cid) { const conv = await getChatwootConversationId(cid); if (conv?.id) await enviarMensajeChatwoot(conv.id, msgRecuerdoFactura, true); }
+      } catch(ce) { console.warn('[Recordatorio] Chatwoot factura error:', ce.message); }
       console.log('[Recordatorio] Factura enviado a', telefono);
     } catch(e) { console.error('[Recordatorio] Error factura:', e.message); }
   }, 10 * 60 * 1000);
@@ -110,13 +114,17 @@ function programarRecuerdoContratar(telefono, ahorroAnual, compania) {
       const { data: usuario } = await db.supabase.from('usuarios').select('id, estado').eq('telefono', telefono).single();
       if (!usuario || usuario.estado === 'contratado') return;
       const ahorro = Math.round(ahorroAnual);
-      await enviarMensajeWhatsApp(telefono,
-        `\u23f0 \u00a1Recuerda que tienes ${ahorro}\u20ac al a\u00f1o esperando! 
+      const msgRecuerdoContratar = `\u23f0 \u00a1Recuerda que tienes ${ahorro}\u20ac al a\u00f1o esperando! 
 
 Tu informe con el ahorro pasando a *${compania}* sigue disponible. Solo rellena tus datos y nosotros lo gestionamos todo. 
 
-\u00bfQuieres que te renv\u00ede el enlace?`
-      );
+\u00bfQuieres que te renv\u00ede el enlace?`;
+      await enviarMensajeWhatsApp(telefono, msgRecuerdoContratar);
+      // Registrar en Chatwoot
+      try {
+        const cid = await getChatwootContactId(telefono, null);
+        if (cid) { const conv = await getChatwootConversationId(cid); if (conv?.id) await enviarMensajeChatwoot(conv.id, msgRecuerdoContratar, true); }
+      } catch(ce) { console.warn('[Recordatorio] Chatwoot contratar error:', ce.message); }
       console.log('[Recordatorio] Contratar enviado a', telefono);
     } catch(e) { console.error('[Recordatorio] Error contratar:', e.message); }
   }, 20 * 60 * 1000);
