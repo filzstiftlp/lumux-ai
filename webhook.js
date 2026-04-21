@@ -883,6 +883,7 @@ router.post('/contrato', async (req, res) => {
     const {
       short_id, nombre, nueva_compania, nueva_tarifa, ahorro_anual,
       email, iban,
+      telefono: telefonoFormulario,
       dni_frontal_base64, dni_frontal_tipo, dni_frontal_nombre,
       dni_trasero_base64, dni_trasero_tipo, dni_trasero_nombre,
     } = req.body;
@@ -1069,6 +1070,7 @@ router.post('/contrato', async (req, res) => {
         <table style="border-collapse:collapse;width:100%;font-size:14px">
           <tr><td colspan="2" style="padding:10px 12px;background:#f0fdf4;font-weight:700;color:#15803d;font-size:12px;letter-spacing:.05em">DATOS DEL TITULAR</td></tr>
           ${r('Nombre titular', nombreReal)}
+          ${r('Teléfono', telefonoCliente || '—', true)}
           ${r('DNI / NIF', informeData?.dni || '—', true)}
           ${r('Email', email)}
           ${r('IBAN', `<span style="font-family:monospace">${iban}</span>`, true)}
@@ -1117,15 +1119,35 @@ router.post('/contrato', async (req, res) => {
         }
       } catch(e) { console.warn('[Contrato] Telefono fallback error:', e.message); }
     }
+    // Fallback final: teléfono enviado desde el formulario de contrato
+    if (!telefonoCliente && telefonoFormulario) {
+      telefonoCliente = telefonoFormulario.replace(/\D/g, '');
+      console.log(`[Contrato] Telefono del formulario: ${telefonoCliente}`);
+      // Guardarlo en el usuario para futuros eventos CAPI
+      if (informeData?.usuario_id) {
+        await db.supabase.from('usuarios')
+          .update({ telefono: telefonoCliente })
+          .eq('id', informeData.usuario_id);
+      }
+    }
     if (!telefonoCliente) console.warn('[Contrato] ⚠️ WA NO enviado: telefono no disponible');
     if (telefonoCliente) {
       try {
         const nombreCorto = (nombreReal).split(' ')[0] || '';
-        await enviarMensajeWhatsApp(
-          telefonoCliente,
-          `✅ ¡Todo listo${nombreCorto ? ', ' + nombreCorto : ''}! Hemos enviado tu solicitud de cambio a ${nueva_compania}.\n\nRecibirás el contrato para firmar en menos de 24h en ${email}.\n\n¿Tienes alguna duda? Escríbenos aquí mismo 💬`
-        );
+        const msgConfirmacion = `✅ ¡Todo listo${nombreCorto ? ', ' + nombreCorto : ''}! Hemos enviado tu solicitud de cambio a ${nueva_compania}.\n\nRecibirás el contrato para firmar en menos de 24h en ${email}.\n\n¿Tienes alguna duda? Escríbenos aquí mismo 💬`;
+        await enviarMensajeWhatsApp(telefonoCliente, msgConfirmacion);
         console.log(`[Contrato] WA confirmación enviado → ${telefonoCliente}`);
+        // ─── Registrar en Chatwoot para que aparezca en la conversación del agente ───
+        try {
+          const contactIdConf = await getChatwootContactId(telefonoCliente, nombreReal);
+          if (contactIdConf) {
+            const convConf = await getChatwootConversationId(contactIdConf);
+            if (convConf?.id) {
+              await enviarMensajeChatwoot(convConf.id, msgConfirmacion, true);
+              console.log(`[Contrato] Chatwoot confirmación registrada conv=${convConf.id}`);
+            }
+          }
+        } catch(ce) { console.warn('[Contrato] Chatwoot confirm error:', ce.message); }
       } catch(e) { console.error('[Contrato] WA confirm error:', e.message); }
     }
 
