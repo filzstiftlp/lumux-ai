@@ -11,11 +11,11 @@
  *   META_PAGE_ID        → ID de la Facebook Page vinculada a tu WABA
  *                         (Meta Business → tu Página → Acerca de → ID de página)
  *
- * Por qué business_messaging y no website:
- *   Los usuarios llegan vía Click-to-WhatsApp. Meta exige action_source:
- *   "business_messaging" + messaging_channel: "whatsapp" para atribuir
- *   correctamente los eventos a campañas de mensajería. Con "website"
- *   los eventos llegan huérfanos y no cierran el loop de atribución.
+ * action_source dinámico (actualizado 21/04/2026 per recomendación Meta AI):
+ *   - Si hay fbp o fbc (capturados desde informe.html) → "website" siempre.
+ *     Meta prioriza cookies/clics para atribución y da mayor EMQ.
+ *   - Si solo hay ctwa_clid y no hay datos web → "business_messaging".
+ *   - Esta combinación maximiza la atribución en flujos Click-to-WhatsApp.
  *
  * Por qué ctwa_clid:
  *   Es el identificador único del clic en el anuncio. Meta lo incluye en
@@ -101,10 +101,12 @@ async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, mon
   };
 
   // ── action_source dinámico ──────────────────────────────────────────────────
-  // Con ctwa_clid → business_messaging + messaging_channel (ciclo CTWA completo)
-  // Sin ctwa_clid → website (Meta rechaza business_messaging sin ctwa_clid en Purchase,
-  //                          y "Lead" no es nombre válido para business_messaging)
-  const usarMessaging = !!ctwaClid;
+  // Recomendación Meta AI (21/04/2026):
+  // Si tenemos fbp o fbc (datos de navegador del informe.html) → SIEMPRE "website"
+  // porque Meta prioriza coincidencia por cookies/clics y es más preciso para atribución.
+  // Solo usar business_messaging si NO hay datos web y SÍ hay ctwa_clid.
+  const tieneDatosWeb = !!(fbp || fbc);
+  const usarMessaging = !tieneDatosWeb && !!ctwaClid;
 
   // Para business_messaging Meta exige nombres de evento específicos:
   //   "Lead" → "LeadSubmitted"   |   "Purchase" → "Purchase" (este sí es válido)
