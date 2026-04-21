@@ -1036,6 +1036,27 @@ router.post('/contrato', async (req, res) => {
 
     // ─── BACKGROUND: email + WhatsApp + Meta CAPI (continuación del setImmediate) ─
 
+      // ─── Resolver teléfono del cliente (necesario para WA, email y CAPI) ───
+      let telefonoCliente = informeData?.telefono;
+      if (!telefonoCliente && informeData?.usuario_id) {
+        try {
+          const { data: usuarioTel } = await db.supabase
+            .from('usuarios').select('telefono').eq('id', informeData.usuario_id).single();
+          if (usuarioTel?.telefono) {
+            telefonoCliente = usuarioTel.telefono;
+            console.log(`[Contrato] Telefono fallback de usuarios: ${telefonoCliente}`);
+          }
+        } catch(e) { console.warn('[Contrato] Telefono fallback error:', e.message); }
+      }
+      if (!telefonoCliente && telefonoFormulario) {
+        telefonoCliente = telefonoFormulario.replace(/\D/g, '');
+        console.log(`[Contrato] Telefono del formulario: ${telefonoCliente}`);
+        if (informeData?.usuario_id) {
+          await db.supabase.from('usuarios').update({ telefono: telefonoCliente }).eq('id', informeData.usuario_id);
+        }
+      }
+      if (!telefonoCliente) console.warn('[Contrato] ⚠️ WA NO enviado: telefono no disponible');
+
       // ─── META CAPI: Purchase ──────────────────────────────────────────────
       // ctwa_clid + fbp/fbc/ip/ua: recuperar del informe y usuario
       const { data: usuarioPurchase } = await db.supabase
@@ -1148,29 +1169,7 @@ router.post('/contrato', async (req, res) => {
     console.log(`[Contrato] ✅ Email → ${emailDestino} | factura=${facturaBuffer ? 'adjunta' : 'NO'} | short_id=${short_id}`);
 
     // ─── 6. WhatsApp confirmación al cliente ──────────────────────────────
-    let telefonoCliente = informeData?.telefono;
-    if (!telefonoCliente && informeData?.usuario_id) {
-      try {
-        const { data: usuarioTel } = await db.supabase
-          .from('usuarios').select('telefono').eq('id', informeData.usuario_id).single();
-        if (usuarioTel?.telefono) {
-          telefonoCliente = usuarioTel.telefono;
-          console.log(`[Contrato] Telefono fallback de usuarios: ${telefonoCliente}`);
-        }
-      } catch(e) { console.warn('[Contrato] Telefono fallback error:', e.message); }
-    }
-    // Fallback final: teléfono enviado desde el formulario de contrato
-    if (!telefonoCliente && telefonoFormulario) {
-      telefonoCliente = telefonoFormulario.replace(/\D/g, '');
-      console.log(`[Contrato] Telefono del formulario: ${telefonoCliente}`);
-      // Guardarlo en el usuario para futuros eventos CAPI
-      if (informeData?.usuario_id) {
-        await db.supabase.from('usuarios')
-          .update({ telefono: telefonoCliente })
-          .eq('id', informeData.usuario_id);
-      }
-    }
-    if (!telefonoCliente) console.warn('[Contrato] ⚠️ WA NO enviado: telefono no disponible');
+    // telefonoCliente ya resuelto al inicio del background
     if (telefonoCliente) {
       try {
         const nombreCorto = (nombreReal).split(' ')[0] || '';
