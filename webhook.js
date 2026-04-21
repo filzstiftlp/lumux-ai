@@ -573,7 +573,14 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     await db.programarRemarketing(usuario.id, oferta.id, 3, 'seguimiento_oferta');
 
     // ─── META CAPI: Lead ──────────────────────────────────────────────────────
-    meta.enviarLead({ telefono, nombre: usuario.nombre, ahorro: comparativa.ahorro, ctwaClid: usuario.ctwa_clid }).catch(() => {});
+    meta.enviarLead({
+      telefono,
+      nombre:     usuario.nombre,
+      ahorro:     comparativa.ahorro,
+      ctwaClid:   usuario.ctwa_clid,
+      externalId: usuario.id,                          // ID ünico del usuario en Supabase
+      eventId:    `lead_${informeGuardado?.short_id}`, // short_id del informe — ünico y estable para reintentos
+    }).catch(() => {});
     // ─── TIKTOK CAPI: Lead ────────────────────────────────────────────────────
     tiktok.enviarLead({ telefono, ahorro: comparativa.ahorro }).catch(() => {});
     cancelarRecordatorios(telefono);
@@ -758,7 +765,13 @@ router.post('/whatsapp', async (req, res) => {
     // Cubre el tramo Clic -> Conversacion que Meta veia como agujero negro.
     // 'Contact' es el nombre estandar de Meta para conversacion/contacto iniciado.
     if (usuario.estado === 'inicio') {
-      meta.enviarConversacionIniciada({ telefono: from, nombre: usuario.nombre, ctwaClid }).catch(() => {});
+      meta.enviarConversacionIniciada({
+        telefono:   from,
+        nombre:     usuario.nombre,
+        ctwaClid,
+        externalId: usuario.id,          // ID ünico del usuario en Supabase
+        eventId:    msg.id || `contact_${from}_${Date.now()}`, // wamid o fallback ünico
+      }).catch(() => {});
       // Actualizar estado a 'activo' para que no se dispare Contact en el siguiente mensaje
       await db.actualizarEstado(usuario.id, 'activo');
       usuario.estado = 'activo';
@@ -1039,6 +1052,8 @@ router.post('/contrato', async (req, res) => {
         fbc:         informeData?.fbc || null,
         clientIp:    informeData?.client_ip || clientIp || null,
         clientUa:    informeData?.client_ua || null,
+        externalId:  informeData?.usuario_id,          // ID ünico del usuario en Supabase
+        eventId:     `purchase_${short_id}`,           // short_id — estable para reintentos, evita duplicados
       }).catch(() => {});
       // ─── TIKTOK CAPI: Purchase ────────────────────────────────────────────
       tiktok.enviarPurchase({

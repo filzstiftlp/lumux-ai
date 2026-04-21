@@ -63,7 +63,7 @@ function normalizarTelefono(tel) {
  * @param {string}  [ctwaClid]   — ctwa_clid capturado del primer mensaje del anuncio
  * @param {object}  [customData] — campos adicionales de custom_data
  */
-async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, moneda = 'EUR', ctwaClid, fbp, fbc, clientIp, clientUa, customData = {} }) {
+async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, moneda = 'EUR', ctwaClid, fbp, fbc, clientIp, clientUa, externalId, eventId, customData = {} }) {
   if (!PIXEL_ID || !ACCESS_TOKEN) {
     console.warn('[META CAPI] Faltan META_PIXEL_ID / META_ACCESS_TOKEN. Evento omitido.');
     return;
@@ -80,6 +80,8 @@ async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, mon
   // ── user_data: campos de identidad (hashed) + campos de mensajería ──────────
   const userData = {
     // Datos personales — siempre hasheados
+    // external_id: ID único del cliente (usuario.id de Supabase) — mejora EMQ +1.4 puntos
+    ...(externalId ? { external_id: [hash(String(externalId))] } : {}),
     ph:      [hash(normalizarTelefono(telefono))].filter(Boolean),
     em:      [hash(email)].filter(Boolean),
     fn:      [hash(fn)].filter(Boolean),
@@ -115,6 +117,8 @@ async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, mon
   const event = {
     event_name:  eventNameFinal,
     event_time:  Math.floor(Date.now() / 1000),
+    // event_id: usado por Meta para deduplicación — SIEMPRE el mismo para reintentos
+    ...(eventId ? { event_id: eventId } : {}),
     action_source:     usarMessaging ? 'business_messaging' : 'website',
     ...(usarMessaging ? { messaging_channel: 'whatsapp' } : {}),
     user_data:   userData,
@@ -154,12 +158,14 @@ async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, mon
  * @param {number} ahorro     Ahorro anual estimado en € — se pasa como value
  * @param {string} [ctwaClid] Click ID del anuncio (de usuario.ctwa_clid en Supabase)
  */
-async function enviarLead({ telefono, nombre, ahorro, ctwaClid }) {
+async function enviarLead({ telefono, nombre, ahorro, ctwaClid, externalId, eventId }) {
   await enviarEventoCAPI({
     eventName:  'Lead',
     telefono,
     nombre,
     ctwaClid,
+    externalId,
+    eventId,
     valor:      ahorro || 0,   // value en Lead → Meta optimiza por valor desde el funnel alto
     customData: {
       content_name: 'informe_ahorro_energia',
@@ -178,7 +184,7 @@ async function enviarLead({ telefono, nombre, ahorro, ctwaClid }) {
  * @param {string} compania     Compañía nueva contratada
  * @param {string} [ctwaClid]   Click ID del anuncio (de usuario.ctwa_clid en Supabase)
  */
-async function enviarPurchase({ telefono, email, nombre, ahorroAnual, compania, ctwaClid, fbp, fbc, clientIp, clientUa }) {
+async function enviarPurchase({ telefono, email, nombre, ahorroAnual, compania, ctwaClid, fbp, fbc, clientIp, clientUa, externalId, eventId }) {
   await enviarEventoCAPI({
     eventName:  'Purchase',
     telefono,
@@ -189,6 +195,8 @@ async function enviarPurchase({ telefono, email, nombre, ahorroAnual, compania, 
     fbc,
     clientIp,
     clientUa,
+    externalId,
+    eventId,
     valor:      ahorroAnual || 0,
     customData: {
       content_name:     'contrato_firmado',
@@ -208,7 +216,7 @@ async function enviarPurchase({ telefono, email, nombre, ahorroAnual, compania, 
  * @param {string} nombre     Nombre del usuario
  * @param {string} [ctwaClid] Click ID del anuncio
  */
-async function enviarConversacionIniciada({ telefono, nombre, ctwaClid }) {
+async function enviarConversacionIniciada({ telefono, nombre, ctwaClid, externalId, eventId }) {
   // Contact es evento estándar de web — válido para action_source "website".
   // business_messaging solo acepta "Purchase" y "LeadSubmitted".
   // Por eso este evento SIEMPRE va como website, pero incluimos ctwa_clid
@@ -217,7 +225,9 @@ async function enviarConversacionIniciada({ telefono, nombre, ctwaClid }) {
     eventName:  'Contact',
     telefono,
     nombre,
-    ctwaClid:   null,   // forzar website — Contact no es válido para business_messaging
+    ctwaClid:   null,
+    externalId,
+    eventId,   // forzar website — Contact no es válido para business_messaging
     customData: {
       content_name: 'conversacion_iniciada_whatsapp',
       ...(ctwaClid ? { ctwa_clid_ref: ctwaClid } : {}),  // referencia informativa en custom_data
