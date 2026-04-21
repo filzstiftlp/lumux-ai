@@ -877,6 +877,26 @@ function getEmailProveedor(compania) {
   return process.env.EMAIL_SOPORTE || process.env.SMTP_USER;
 }
 
+// ─── /webhook/tracking ────────────────────────────────────────────
+// Recibe fbp, fbc, UA desde informe.html cuando el cliente abre su informe
+// Los guarda en la tabla informes para usarlos en el evento Purchase de Meta CAPI
+router.post('/tracking', async (req, res) => {
+  res.json({ ok: true }); // responder inmediatamente
+  try {
+    const { short_id, fbp, fbc, ua } = req.body;
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
+    if (!short_id) return;
+    const updates = {};
+    if (fbp) updates.fbp = fbp;
+    if (fbc) updates.fbc = fbc;
+    if (ua)  updates.client_ua = ua;
+    if (ip)  updates.client_ip = ip;
+    if (Object.keys(updates).length === 0) return;
+    await db.supabase.from('informes').update(updates).eq('short_id', short_id);
+    console.log(`[Tracking] short_id=${short_id} fbp=${fbp?.slice(0,15)} fbc=${fbc?.slice(0,15)} ip=${ip}`);
+  } catch(e) { console.error('[Tracking] Error:', e.message); }
+});
+
 // ─── /webhook/contrato ────────────────────────────────────────────────────────
 router.post('/contrato', async (req, res) => {
   try {
@@ -1004,16 +1024,21 @@ router.post('/contrato', async (req, res) => {
     // ─── BACKGROUND: email + WhatsApp + Meta CAPI (continuación del setImmediate) ─
 
       // ─── META CAPI: Purchase ──────────────────────────────────────────────
-      // ctwa_clid: recuperar del usuario que originó este informe
+      // ctwa_clid + fbp/fbc/ip/ua: recuperar del informe y usuario
       const { data: usuarioPurchase } = await db.supabase
         .from('usuarios').select('ctwa_clid').eq('id', informeData.usuario_id).single();
+      const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
       meta.enviarPurchase({
-        telefono:    informeData?.telefono,
+        telefono:    informeData?.telefono || telefonoCliente,
         email,
         nombre:      nombreReal,
         ahorroAnual: ahorro_anual,
         compania:    nueva_compania,
         ctwaClid:    usuarioPurchase?.ctwa_clid || null,
+        fbp:         informeData?.fbp || null,
+        fbc:         informeData?.fbc || null,
+        clientIp:    informeData?.client_ip || clientIp || null,
+        clientUa:    informeData?.client_ua || null,
       }).catch(() => {});
       // ─── TIKTOK CAPI: Purchase ────────────────────────────────────────────
       tiktok.enviarPurchase({

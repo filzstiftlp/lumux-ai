@@ -63,7 +63,7 @@ function normalizarTelefono(tel) {
  * @param {string}  [ctwaClid]   — ctwa_clid capturado del primer mensaje del anuncio
  * @param {object}  [customData] — campos adicionales de custom_data
  */
-async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, moneda = 'EUR', ctwaClid, customData = {} }) {
+async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, moneda = 'EUR', ctwaClid, fbp, fbc, clientIp, clientUa, customData = {} }) {
   if (!PIXEL_ID || !ACCESS_TOKEN) {
     console.warn('[META CAPI] Faltan META_PIXEL_ID / META_ACCESS_TOKEN. Evento omitido.');
     return;
@@ -88,10 +88,16 @@ async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, mon
 
     // Campos específicos de business_messaging — NO se hashean
     // page_id: Facebook Page ID vinculada a la WABA (fijo, de env var)
-    ...(PAGE_ID  ? { page_id:   PAGE_ID }  : {}),
-    // ctwa_clid: click ID del anuncio CTWA — es lo que cierra el loop de atribución
-    // Solo presente si el usuario llegó por un anuncio; se guarda en usuarios.ctwa_clid
-    ...(ctwaClid ? { ctwa_clid: ctwaClid } : {}),
+    ...(PAGE_ID    ? { page_id:            PAGE_ID }    : {}),
+    // ctwa_clid: click ID del anuncio CTWA
+    ...(ctwaClid   ? { ctwa_clid:          ctwaClid }   : {}),
+    // fbp: cookie Meta Pixel (_fbp) — mejora EMQ hasta +165%
+    ...(fbp        ? { fbp }                            : {}),
+    // fbc: click ID de Facebook (_fbc / fbclid)
+    ...(fbc        ? { fbc }                            : {}),
+    // IP y User Agent — mejora EMQ +15%
+    ...(clientIp   ? { client_ip_address:  clientIp }   : {}),
+    ...(clientUa   ? { client_user_agent:  clientUa }   : {}),
   };
 
   // ── action_source dinámico ──────────────────────────────────────────────────
@@ -170,13 +176,17 @@ async function enviarLead({ telefono, nombre, ahorro, ctwaClid }) {
  * @param {string} compania     Compañía nueva contratada
  * @param {string} [ctwaClid]   Click ID del anuncio (de usuario.ctwa_clid en Supabase)
  */
-async function enviarPurchase({ telefono, email, nombre, ahorroAnual, compania, ctwaClid }) {
+async function enviarPurchase({ telefono, email, nombre, ahorroAnual, compania, ctwaClid, fbp, fbc, clientIp, clientUa }) {
   await enviarEventoCAPI({
     eventName:  'Purchase',
     telefono,
     email,
     nombre,
     ctwaClid,
+    fbp,
+    fbc,
+    clientIp,
+    clientUa,
     valor:      ahorroAnual || 0,
     customData: {
       content_name:     'contrato_firmado',
