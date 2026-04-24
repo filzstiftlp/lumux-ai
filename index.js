@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const app = express();
 
 // CORS - permitir peticiones desde lumux.es y otros orígenes
@@ -15,8 +16,56 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// ─── RATE LIMITING ────────────────────────────────────────────────────────────
+// WhatsApp webhook: Meta envía 1 msg a la vez por usuario, 30/min es más que suficiente
+const limiterWhatsApp = rateLimit({
+  windowMs: 60 * 1000,       // 1 minuto
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Too many requests' },
+  skip: (req) => req.method === 'GET', // verificación GET de Meta siempre pasa
+});
+
+// Contrato: máx 5 firmas por IP cada 15 min (previene spam de contratos falsos)
+const limiterContrato = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 minutos
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Too many requests' },
+});
+
+// Admin export: máx 20 descargas por hora
+const limiterAdmin = rateLimit({
+  windowMs: 60 * 60 * 1000,  // 1 hora
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Too many requests' },
+});
+
+app.use('/webhook/whatsapp', limiterWhatsApp);
+app.use('/webhook/contrato', limiterContrato);
+app.use('/webhook/admin', limiterAdmin);
+
+// ─── BODY LIMITS + FIRMA WHATSAPP ────────────────────────────────────────────
+// /contrato recibe base64 de 2 DNIs + factura (~10-12MB). El resto no necesita más de 1MB.
+app.use('/webhook/contrato', express.json({ limit: '15mb' }));
+app.use('/webhook/contrato', express.urlencoded({ extended: true, limit: '15mb' }));
+
+// Para el webhook de WhatsApp necesitamos el raw body para verificar la firma HMAC
+const { verificarFirmaWhatsApp } = require('./webhook');
+app.use('/webhook/whatsapp', express.json({
+  limit: '1mb',
+  verify: (req, res, buf) => {
+    try { verificarFirmaWhatsApp(req, res, buf); }
+    catch(e) { res.status(401).json({ error: 'Unauthorized' }); throw e; }
+  }
+}));
+
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Rutas
 const webhookRouter = require('./webhook');

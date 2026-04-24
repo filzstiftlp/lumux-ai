@@ -1,6 +1,27 @@
 const express = require('express');
-const router = express.Router();
-const axios = require('axios');
+const router  = express.Router();
+const axios   = require('axios');
+const crypto  = require('crypto');
+
+// ─── VERIFICACIÓN FIRMA WHATSAPP (X-Hub-Signature-256) ───────────────────────
+// Meta firma cada webhook con HMAC-SHA256 usando el App Secret.
+// Si no coincide → petición rechazada (previene mensajes falsos inyectados).
+function verificarFirmaWhatsApp(req, res, buf) {
+  // Solo aplicar al endpoint de WhatsApp
+  if (!req.path?.includes('/whatsapp')) return;
+  const appSecret = process.env.WHATSAPP_APP_SECRET;
+  if (!appSecret) return; // Si no está configurado, omitir (modo dev)
+  const signature = req.headers['x-hub-signature-256'];
+  if (!signature) {
+    console.warn('[WA Security] Petición sin firma X-Hub-Signature-256 rechazada');
+    throw new Error('Missing signature');
+  }
+  const expected = 'sha256=' + crypto.createHmac('sha256', appSecret).update(buf).digest('hex');
+  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+    console.warn('[WA Security] Firma inválida rechazada');
+    throw new Error('Invalid signature');
+  }
+}
 const FormData = require('form-data');
 // Email via Resend API
 const db = require('./db');
@@ -729,7 +750,11 @@ router.get('/whatsapp', (req, res) => {
 router.post('/whatsapp', async (req, res) => {
   try {
     res.status(200).send('OK');
-    console.log('[WA RAW]', JSON.stringify(req.body));
+    // Log mínimo: sin teléfonos ni contenido de mensajes en producción
+    const _msgType = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.type || 'unknown';
+    const _from    = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from;
+    const _fromLog = _from ? `***${String(_from).slice(-4)}` : 'n/a';
+    console.log(`[WA] tipo=${_msgType} from=${_fromLog}`);
     const entry = req.body.entry?.[0];
     const value = entry?.changes?.[0]?.value;
     const messages = value?.messages;
@@ -836,7 +861,12 @@ router.post('/whatsapp', async (req, res) => {
       // ─── Subir factura a Supabase Storage ────────────────────────────────
       let facturaStorageUrl = null;
       try {
-        const storageFileName = `facturas/${usuario.id}_${Date.now()}_${fileName}`;
+        // Sanitizar nombre: eliminar tildes, espacios, comas y caracteres especiales
+        const safeFileName = (fileName || 'factura.pdf')
+          .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quitar tildes
+          .replace(/[^a-zA-Z0-9._-]/g, '_')                // caracteres no ASCII → _
+          .replace(/_+/g, '_');                              // colapsar múltiples _
+        const storageFileName = `facturas/${usuario.id}_${Date.now()}_${safeFileName}`;
         const { error: storageError } = await db.supabase.storage
           .from('facturas')
           .upload(storageFileName, fileBuffer, { contentType: mediaType, upsert: false });
@@ -931,6 +961,25 @@ router.post('/contrato', async (req, res) => {
 
     if (!email || !iban || !dni_frontal_base64 || !dni_trasero_base64) {
       return res.status(400).json({ ok: false, error: 'Faltan datos obligatorios' });
+    }
+
+    // ─── VALIDACIÓN DE SEGURIDAD: short_id real + oferta no firmada ───────
+    if (!short_id) {
+      return res.status(400).json({ ok: false, error: 'Referencia de informe requerida' });
+    }
+    const { data: informeCheck, error: informeCheckErr } = await db.supabase
+      .from('informes')
+      .select('id, oferta_id, ofertas(estado)')
+      .eq('short_id', short_id)
+      .maybeSingle();
+
+    if (informeCheckErr || !informeCheck) {
+      console.warn(`[Contrato] short_id inválido o inexistente: ${short_id}`);
+      return res.status(400).json({ ok: false, error: 'Informe no encontrado' });
+    }
+    if (informeCheck.ofertas?.estado === 'firmada') {
+      console.warn(`[Contrato] Intento de doble firma bloqueado: ${short_id}`);
+      return res.status(409).json({ ok: false, error: 'Este contrato ya fue procesado anteriormente' });
     }
 
     // ─── RESPONDER AL CLIENTE INMEDIATAMENTE (antes de cualquier I/O) ─────
@@ -1348,3 +1397,4 @@ router.get('/admin/exportar-leads', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.verificarFirmaWhatsApp = verificarFirmaWhatsApp;

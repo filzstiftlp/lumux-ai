@@ -201,16 +201,32 @@ function buildImageContent(base64Data, mediaType) {
 }
 
 function parseJSONSafe(text) {
+  // Intento 1: limpiar backticks y parsear directamente
   const clean = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-  return JSON.parse(clean);
+  try {
+    return JSON.parse(clean);
+  } catch(e1) {
+    // Intento 2: extraer el bloque JSON de cualquier posición en el texto
+    // (Claude a veces añade texto explicativo antes o después del JSON)
+    const start = text.indexOf('{');
+    const end   = text.lastIndexOf('}');
+    if (start !== -1 && end !== -1 && end > start) {
+      try {
+        return JSON.parse(text.substring(start, end + 1));
+      } catch(e2) { /* continuar */ }
+    }
+    throw e1; // si nada funcionó, propagar el error original
+  }
 }
 
 async function analizarFactura(base64Data, mediaType) {
   const imageContent = buildImageContent(base64Data, mediaType);
 
+  // Hasta 2 intentos: a veces Claude devuelve texto en lugar de JSON puro (PDFs grandes/firmados)
+  for (let intento = 1; intento <= 2; intento++) {
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
-    max_tokens: 2048,
+    max_tokens: 4096,
     messages: [{
       role: 'user',
       content: [
@@ -274,9 +290,15 @@ REGLAS IMPORTANTES:
   try {
     return parseJSONSafe(response.content[0].text);
   } catch (e) {
-    console.error('Error parseando factura:', e);
+    console.error(`[OCR] Intento ${intento}/2 falló al parsear JSON. Respuesta Claude (primeros 300 chars):`,
+      response.content[0].text?.substring(0, 300));
+    if (intento < 2) {
+      await new Promise(r => setTimeout(r, 1500)); // pequeña pausa antes del reintento
+      continue;
+    }
     return null;
   }
+  } // fin for intento
 }
 
 // ─── COMPARATIVA DE LUZ ───────────────────────────────────────────────────────
