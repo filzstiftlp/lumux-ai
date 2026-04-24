@@ -36,6 +36,10 @@ const {
 // ─── SISTEMA DE RECORDATORIOS ────────────────────────────────────────────────
 const recuerdoFactura   = new Map();
 const recuerdoContratar = new Map();
+// Teléfonos que ya recibieron el recordatorio de factura en esta sesión de servidor.
+// Evita que el bot lo repita cuando el cliente responde después del recordatorio.
+// Se limpia cuando el cliente envía una factura.
+const recuerdoFacturaEnviado = new Set();
 
 // ─── TIMERS DE TRASPASO A AGENTE ─────────────────────────────────────────────
 // Timer A: cliente no envió factura tras recordatorio → 3h → pasar a Adrián
@@ -106,6 +110,8 @@ function cancelarRecordatorios(telefono) {
 }
 
 function programarRecuerdoFactura(telefono) {
+  // No programar si ya se envió el recordatorio en esta sesión (evita repetición tras respuesta)
+  if (recuerdoFacturaEnviado.has(telefono)) return;
   if (recuerdoFactura.has(telefono)) clearTimeout(recuerdoFactura.get(telefono));
   const t = setTimeout(async () => {
     recuerdoFactura.delete(telefono);
@@ -114,6 +120,8 @@ function programarRecuerdoFactura(telefono) {
       if (!usuario) return;
       const { data: facturas } = await db.supabase.from('facturas').select('id').eq('usuario_id', usuario.id).limit(1);
       if (facturas && facturas.length > 0) return;
+      // Marcar como enviado ANTES de enviar, para que cualquier respuesta del cliente no lo reactive
+      recuerdoFacturaEnviado.add(telefono);
       const msgRecuerdoFactura = '\uD83D\uDC4B \u00A1Oye, que a\u00FAn no me has mandado tu factura! \uD83D\uDE04\n\nEnv\u00EDamela ahora y en segundos te digo exactamente cu\u00E1nto puedes ahorrar. \u26A1 Es gratis y sin compromiso.';
       await enviarMensajeWhatsApp(telefono, msgRecuerdoFactura);
       // Registrar en Chatwoot
@@ -322,28 +330,34 @@ async function enviarNotaContextoAgente(convId, telefono, motivo) {
       .select('nombre, compania_actual, nueva_compania, nueva_tarifa, ahorro_anual, pct_ahorro, precio_actual_mes, precio_nuevo_mes, cups, created_at, short_id, ofertas(estado)')
       .eq('usuario_id', uid)
       .order('created_at', { ascending: false })
-      .limit(1);
+      .limit(10); // Todos los informes del cliente (luz, gas, etc.)
 
-    const inf = informes?.[0];
     const motivoTexto = motivo === 'sin_factura'
       ? '⏰ No envió factura tras recordatorio (3h sin respuesta)'
       : '⏰ Recibió informe pero no firmó (3h sin contratar)';
 
+    const nombreCliente = informes?.[0]?.nombre || usuarios[0].nombre || '—';
     let nota = `📋 *RESUMEN DEL LEAD — TRASPASO AUTOMÁTICO*\n\n`;
     nota += `*Motivo:* ${motivoTexto}\n`;
     nota += `*Teléfono:* ${telefono}\n`;
-    nota += `*Nombre:* ${inf?.nombre || usuarios[0].nombre || '—'}\n\n`;
+    nota += `*Nombre:* ${nombreCliente}\n\n`;
 
-    if (inf) {
-      const urlInforme = `${process.env.WEB_URL || 'https://lumux.es'}/informe.html?id=${inf.short_id}`;
-      nota += `*Compañía actual:* ${inf.compania_actual || '—'}\n`;
-      nota += `*Mejor oferta:* ${inf.nueva_compania} · ${inf.nueva_tarifa || '—'}\n`;
-      nota += `*Factura actual:* ${inf.precio_actual_mes ? `${Number(inf.precio_actual_mes).toFixed(2)}€/mes` : '—'}\n`;
-      nota += `*Con Lumux:* ${inf.precio_nuevo_mes ? `${Number(inf.precio_nuevo_mes).toFixed(2)}€/mes` : '—'}\n`;
-      nota += `*Ahorro:* ${inf.ahorro_anual ? `${Math.round(inf.ahorro_anual)}€/año` : '—'} (${inf.pct_ahorro || '—'}%)\n`;
-      nota += `*CUPS:* ${inf.cups || '—'}\n`;
-      nota += `*Informe:* ${urlInforme}\n`;
-      nota += `\n✅ *Acción:* Contactar al cliente, cerrar la firma y luego *desasignarte* para reactivar el bot.`;
+    if (informes?.length) {
+      const baseUrl = process.env.WEB_URL || 'https://lumux.es';
+      // Mostrar TODOS los informes generados (luz, gas, u otros)
+      informes.forEach((inf, i) => {
+        const urlInforme = `${baseUrl}/informe.html?id=${inf.short_id}`;
+        const estado = inf.ofertas?.estado === 'firmada' ? '✅ FIRMADA' : '⏳ Pendiente';
+        nota += `*━━ Informe ${i + 1} (${inf.ofertas?.estado === 'firmada' ? 'FIRMADA' : 'sin firmar'}) ━━*\n`;
+        nota += `*Compañía actual:* ${inf.compania_actual || '—'}\n`;
+        nota += `*Mejor oferta:* ${inf.nueva_compania} · ${inf.nueva_tarifa || '—'}\n`;
+        nota += `*Factura actual:* ${inf.precio_actual_mes ? `${Number(inf.precio_actual_mes).toFixed(2)}€/mes` : '—'}\n`;
+        nota += `*Con Lumux:* ${inf.precio_nuevo_mes ? `${Number(inf.precio_nuevo_mes).toFixed(2)}€/mes` : '—'}\n`;
+        nota += `*Ahorro:* ${inf.ahorro_anual ? `${Math.round(inf.ahorro_anual)}€/año` : '—'} (${inf.pct_ahorro || '—'}%)\n`;
+        nota += `*CUPS:* ${inf.cups || '—'}\n`;
+        nota += `*Informe:* ${urlInforme}\n\n`;
+      });
+      nota += `✅ *Acción:* Contactar al cliente, cerrar la firma y luego *desasignarte* para reactivar el bot.`;
     } else {
       nota += `ℹ️ El cliente inició conversación pero no llegó a enviar factura.\n`;
       nota += `\n✅ *Acción:* Contactar para pedirle la factura, y luego *desasignarte* para reactivar el bot.`;
@@ -853,6 +867,7 @@ router.post('/whatsapp', async (req, res) => {
       await db.guardarMensaje(usuario.id, 'user', '[Factura enviada]', { archivoUrl });
       cancelarRecordatorios(from);
       cancelarTraspasos(from); // cliente activo, cancelar timers de traspaso
+      recuerdoFacturaEnviado.delete(from); // liberar: si manda otra factura luego, puede recibir recordatorio de nuevo
       await enviarMensajeWhatsApp(from, '⏳ Estoy analizando tu factura, dame un momento...');
       const imageResponse = await axios.get(archivoUrl, { responseType: 'arraybuffer', headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } });
       const fileBuffer = Buffer.from(imageResponse.data);
