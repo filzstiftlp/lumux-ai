@@ -256,8 +256,8 @@ CAMPOS REQUERIDOS:
   "importe_energia": importe total en € solo de energía (sin impuestos ni potencia),
   "importe_potencia": importe total en € solo de potencia (sin impuestos),
   "precio_total": ⚠️ CRÍTICO: Usa el importe "TOTAL A PAGAR" final de la factura, que es el importe CON IVA incluido (el número más grande y destacado). Este valor ya incluye IVA, impuesto eléctrico y todos los conceptos. EXCEPCIÓN: si la factura muestra descuentos PROMOCIONALES adicionales fuera del bloque estándar (líneas como "PARA TI", "Descuento bienvenida", "Bonificación comercial"), ignóralas y usa el importe ANTES de esos descuentos extra. EJEMPLO correcto: si aparece "TOTAL ELECTRICIDAD 92,63€" + "IVA 9,26€" + "TOTAL A PAGAR 101,89€" → precio_total = 101.89. EJEMPLO con descuento promo: si aparece "TOTAL ELECTRICIDAD 46,59€" luego "PARA TI -20,00€" luego "TOTAL A PAGAR 32,37€" → precio_total = 46.59 (ignorar el descuento promo),
-  "descuento_energia_pct": porcentaje de descuento contractual/fidelización sobre la energía si aparece explícito en la factura (ej: 10 para un "10% DTO" o "Dto. fidelización 10%"). Solo si es un descuento CONTRACTUAL permanente sobre el consumo, NO descuentos puntuales tipo "PARA TI". null si no hay descuento contractual,
-  "importe_energia_sin_descuento": importe de energía ANTES de aplicar descuento_energia_pct (null si no hay descuento contractual),
+  "descuento_energia_pct": SUMA de TODOS los descuentos contractuales sobre la energía que el cliente PERDERÍA al cambiar de compañía. Incluye: descuentos de fidelización ("Dto. fidelidad 10%"), descuentos vinculados a servicios/seguros contratados ("3% Dto. Servicios", "Dto. por tener Plan Protección"), descuentos de permanencia, etc. Si hay MÚLTIPLES descuentos, SÚMALOS (ej: 10% fidelidad + 3% servicios → descuento_energia_pct = 13). NO incluir descuentos puntuales/promocionales tipo "PARA TI", "Descuento bienvenida" ni "Bonificación comercial". null si no hay ningún descuento contractual que se perdería al cambiar,
+  "importe_energia_sin_descuento": importe de energía ANTES de aplicar ninguno de los descuentos de descuento_energia_pct. Si los descuentos se aplican secuencialmente, usa el importe ORIGINAL antes del primero. (null si descuento_energia_pct es null),
   "cups": "código CUPS" o null,
   "tiene_autoconsumo": true o false,
   "tiene_bateria_virtual": true o false,
@@ -280,7 +280,7 @@ REGLAS IMPORTANTES:
 - precio_kwh: DIVIDE importe_energia / consumo_kwh. Si hay descuento contractual, usa importe_energia_sin_descuento / consumo_kwh para reflejar el precio real de tarifa
 - precio_total: incluye el descuento contractual si lo hay (es el importe real que paga el cliente habitualmente)
 - precio_potencia_dia: es el precio UNITARIO €/kW/día (ej: 0.097), NO el importe total
-- descuento_energia_pct: solo si hay un "X% DTO" o "Dto. fidelización X%" sobre la energía/consumo de forma contractual. La factura de Susana tiene "Descuento promocional 70,59 x -10% DTO" → descuento_energia_pct = 10
+- descuento_energia_pct: SUMA de todos los descuentos contractuales sobre energía que el cliente perdería al cambiar. Si hay "10% Dto. fidelidad" + "3% Dto. Servicios" → descuento_energia_pct = 13. Si solo hay "10% DTO" → 10. Los descuentos "PARA TI" o "Descuento bienvenida" NO cuentan
 - Si no aparece un dato, pon null`
         }
       ]
@@ -353,9 +353,16 @@ async function generarComparativa(datosFactura, tarifas) {
   const tieneTriperiodo = consumoP1 > 0 || consumoP2 > 0 || consumoP3 > 0;
 
   // ── Coste actual real: lo que el cliente paga de media al mes ──────────────
-  // precio_total ya incluye descuento contractual → es el coste real del cliente
-  // Lo normalizamos a 30 días para comparar igual que las tarifas nuevas
-  const precioTotalReal = datosFactura.precio_total;
+  // precio_total ya incluye descuentos contractuales → es el coste real del cliente
+  // Si hay descuento de fidelización/servicio sobre energía, sumarlo de vuelta:
+  // al cambiar de compañía el cliente PIERDE esos descuentos → la comparativa debe
+  // reflejar lo que realmente pagaría sin ellos en su compañía actual
+  let precioTotalReal = datosFactura.precio_total;
+  if (datosFactura.descuento_energia_pct && datosFactura.importe_energia_sin_descuento) {
+    const descuentoEuros = datosFactura.importe_energia_sin_descuento * (datosFactura.descuento_energia_pct / 100);
+    precioTotalReal = precioTotalReal + descuentoEuros;
+    console.log(`[Comparativa] Descuento ${datosFactura.descuento_energia_pct}% recuperado (+${descuentoEuros.toFixed(2)}€): precio_total ${datosFactura.precio_total}€ → base comparativa ${precioTotalReal.toFixed(2)}€`);
+  }
 
   const costeActualMes  = (precioTotalReal / diasFactura) * 30;
 
