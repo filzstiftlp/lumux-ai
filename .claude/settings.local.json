@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(wc -l /c/Users/alber/lumux-ai/*.js)",
-      "Bash(npx remotion:*)"
+      "Bash(npx remotion:*)",
+      "Bash(dir \"C:\\\\Program Files\\\\pgAdmin 4\\\\\" /s /b 2>nul | findstr psql.exe)",
+      "WebSearch",
+      "WebFetch(domain:claritysoft.com)",
+      "WebFetch(domain:knowledge.hubspot.com)"
     ]
   }
 }

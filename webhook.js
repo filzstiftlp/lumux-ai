@@ -597,6 +597,7 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
       precio_nuevo_mes:  d.precio_nuevo_mes,
       ahorro_anual:      comparativa.ahorro,
       pct_ahorro:        d.pct_ahorro,
+      precio_kwh:        comparativa.tarifa.precio_kwh || null,
       precio_kwh_p1:     comparativa.tarifa.precio_kwh_p1,
       precio_kwh_p2:     comparativa.tarifa.precio_kwh_p2,
       precio_kwh_p3:     comparativa.tarifa.precio_kwh_p3,
