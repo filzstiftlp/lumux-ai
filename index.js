@@ -3,6 +3,10 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const app = express();
 
+// Railway corre detrás de un reverse proxy — necesario para que
+// express-rate-limit lea X-Forwarded-For sin lanzar ValidationError
+app.set('trust proxy', 1);
+
 // CORS - permitir peticiones desde lumux.es y otros orígenes
 app.use((req, res, next) => {
   const allowed = ['https://lumux.es', 'https://www.lumux.es'];
