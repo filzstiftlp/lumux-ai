@@ -973,11 +973,7 @@ router.post('/tracking', async (req, res) => {
     //    Meta promediará ambos eventos → EMQ general del Lead sube notablemente
     const { data: informe } = await db.supabase
       .from('informes')
-      .select(`
-        usuario_id, telefono, nombre, ahorro_anual,
-        facturas ( propiedades ( codigo_postal, ciudad, provincia ) ),
-        usuarios ( ctwa_clid )
-      `)
+      .select('usuario_id, telefono, nombre, ahorro_anual, usuarios ( ctwa_clid )')
       .eq('short_id', short_id)
       .single();
 
