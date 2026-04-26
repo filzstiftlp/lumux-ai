@@ -63,7 +63,7 @@ function normalizarTelefono(tel) {
  * @param {string}  [ctwaClid]   — ctwa_clid capturado del primer mensaje del anuncio
  * @param {object}  [customData] — campos adicionales de custom_data
  */
-async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, moneda = 'EUR', ctwaClid, fbp, fbc, clientIp, clientUa, externalId, eventId, customData = {} }) {
+async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, moneda = 'EUR', ctwaClid, fbp, fbc, clientIp, clientUa, externalId, eventId, codigoPostal, ciudad, provincia, customData = {} }) {
   if (!PIXEL_ID || !ACCESS_TOKEN) {
     console.warn('[META CAPI] Faltan META_PIXEL_ID / META_ACCESS_TOKEN. Evento omitido.');
     return;
@@ -97,9 +97,13 @@ async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, mon
     ...(fbp        ? { fbp }                            : {}),
     // fbc: click ID de Facebook (_fbc / fbclid)
     ...(fbc        ? { fbc }                            : {}),
-    // IP y User Agent — mejora EMQ +15%
+    // IP y User Agent — mejora EMQ +33%
     ...(clientIp   ? { client_ip_address:  clientIp }   : {}),
     ...(clientUa   ? { client_user_agent:  clientUa }   : {}),
+    // Localización (hashed) — código postal, ciudad, provincia — mejora EMQ +15% cada uno
+    ...(codigoPostal ? { zp: [hash(String(codigoPostal).replace(/\s/g, ''))] } : {}),
+    ...(ciudad       ? { ct: [hash(ciudad.trim().toLowerCase())]             } : {}),
+    ...(provincia    ? { st: [hash(provincia.trim().toLowerCase())]          } : {}),
   };
 
   // ── action_source dinámico ──────────────────────────────────────────────────
@@ -158,7 +162,8 @@ async function enviarEventoCAPI({ eventName, telefono, email, nombre, valor, mon
  * @param {number} ahorro     Ahorro anual estimado en € — se pasa como value
  * @param {string} [ctwaClid] Click ID del anuncio (de usuario.ctwa_clid en Supabase)
  */
-async function enviarLead({ telefono, nombre, ahorro, ctwaClid, externalId, eventId }) {
+async function enviarLead({ telefono, nombre, ahorro, ctwaClid, externalId, eventId,
+                             fbp, fbc, clientIp, clientUa, codigoPostal, ciudad, provincia }) {
   await enviarEventoCAPI({
     eventName:  'Lead',
     telefono,
@@ -166,7 +171,14 @@ async function enviarLead({ telefono, nombre, ahorro, ctwaClid, externalId, even
     ctwaClid,
     externalId,
     eventId,
-    valor:      ahorro || 0,   // value en Lead → Meta optimiza por valor desde el funnel alto
+    fbp,
+    fbc,
+    clientIp,
+    clientUa,
+    codigoPostal,
+    ciudad,
+    provincia,
+    valor:      ahorro || 0,
     customData: {
       content_name: 'informe_ahorro_energia',
     },
@@ -217,22 +229,46 @@ async function enviarPurchase({ telefono, email, nombre, ahorroAnual, compania, 
  * @param {string} [ctwaClid] Click ID del anuncio
  */
 async function enviarConversacionIniciada({ telefono, nombre, ctwaClid, externalId, eventId }) {
-  // Contact es evento estándar de web — válido para action_source "website".
-  // business_messaging solo acepta "Purchase" y "LeadSubmitted".
-  // Por eso este evento SIEMPRE va como website, pero incluimos ctwa_clid
-  // en custom_data para que Meta pueda correlacionarlo con el clic del anuncio.
+  // Contact: si hay ctwa_clid (viene de anuncio CTWA) → business_messaging con ctwa_clid real.
+  // Si no → website sin señales web (primer mensaje WhatsApp orgánico).
+  // Pasar ctwaClid correctamente permite que Meta vincule el evento al clic del anuncio.
   await enviarEventoCAPI({
     eventName:  'Contact',
     telefono,
     nombre,
-    ctwaClid:   null,
+    ctwaClid,   // ← ya no se fuerza a null: si existe mejora atribución del anuncio
     externalId,
-    eventId,   // forzar website — Contact no es válido para business_messaging
+    eventId,
     customData: {
       content_name: 'conversacion_iniciada_whatsapp',
-      ...(ctwaClid ? { ctwa_clid_ref: ctwaClid } : {}),  // referencia informativa en custom_data
     },
   });
 }
 
-module.exports = { enviarLead, enviarPurchase, enviarConversacionIniciada };
+/**
+ * ViewContent — se llama cuando el usuario abre su informe personalizado en el browser.
+ * No cuenta como Lead (no infla conversiones), pero aporta fbp/fbc/IP/UA reales
+ * que Meta usa para mejorar la coincidencia de identidad del Lead y Purchase previos.
+ */
+async function enviarViewContent({ telefono, nombre, ahorro, ctwaClid, externalId, eventId,
+                                   fbp, fbc, clientIp, clientUa }) {
+  await enviarEventoCAPI({
+    eventName:  'ViewContent',
+    telefono,
+    nombre,
+    ctwaClid,
+    externalId,
+    eventId,
+    fbp,
+    fbc,
+    clientIp,
+    clientUa,
+    valor: ahorro || 0,
+    customData: {
+      content_name:     'informe_ahorro_energia',
+      content_category: 'energia',
+    },
+  });
+}
+
+module.exports = { enviarLead, enviarPurchase, enviarConversacionIniciada, enviarViewContent };

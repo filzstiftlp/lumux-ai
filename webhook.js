@@ -619,11 +619,14 @@ async function procesarFactura(base64, mediaType, usuario, telefono, facturaStor
     // ─── META CAPI: Lead ──────────────────────────────────────────────────────
     meta.enviarLead({
       telefono,
-      nombre:     usuario.nombre,
-      ahorro:     comparativa.ahorro,
-      ctwaClid:   usuario.ctwa_clid,
-      externalId: usuario.id,                          // ID ünico del usuario en Supabase
-      eventId:    `lead_${informeGuardado?.short_id}`, // short_id del informe — ünico y estable para reintentos
+      nombre:       usuario.nombre,
+      ahorro:       comparativa.ahorro,
+      ctwaClid:     usuario.ctwa_clid,
+      externalId:   usuario.id,
+      eventId:      `lead_${informeGuardado?.short_id}`,
+      codigoPostal: datosFactura.codigo_postal || null,
+      ciudad:       datosFactura.ciudad        || null,
+      provincia:    datosFactura.provincia     || null,
     }).catch(() => {});
     // ─── TIKTOK CAPI: Lead ────────────────────────────────────────────────────
     tiktok.enviarLead({ telefono, ahorro: comparativa.ahorro }).catch(() => {});
@@ -953,14 +956,50 @@ router.post('/tracking', async (req, res) => {
     const { short_id, fbp, fbc, ua } = req.body;
     const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
     if (!short_id) return;
+
+    // 1. Guardar señales web en el informe (para Purchase)
     const updates = {};
     if (fbp) updates.fbp = fbp;
     if (fbc) updates.fbc = fbc;
     if (ua)  updates.client_ua = ua;
     if (ip)  updates.client_ip = ip;
-    if (Object.keys(updates).length === 0) return;
-    await db.supabase.from('informes').update(updates).eq('short_id', short_id);
+    if (Object.keys(updates).length > 0) {
+      await db.supabase.from('informes').update(updates).eq('short_id', short_id);
+    }
     console.log(`[Tracking] short_id=${short_id} fbp=${fbp?.slice(0,15)} fbc=${fbc?.slice(0,15)} ip=${ip}`);
+
+    // 2. Re-disparar Lead con señales web reales (fbp/fbc/IP/UA + localización)
+    //    event_id distinto → no es duplicado, es enriquecimiento posterior con datos del browser
+    //    Meta promediará ambos eventos → EMQ general del Lead sube notablemente
+    const { data: informe } = await db.supabase
+      .from('informes')
+      .select(`
+        usuario_id, telefono, nombre, ahorro_anual,
+        facturas ( propiedades ( codigo_postal, ciudad, provincia ) ),
+        usuarios ( ctwa_clid )
+      `)
+      .eq('short_id', short_id)
+      .single();
+
+    if (informe?.telefono && informe?.ahorro_anual > 0) {
+      // ViewContent: el usuario abrió su informe personalizado.
+      // NO usamos Lead para no inflar el contador de conversiones en Meta.
+      // ViewContent aporta fbp/fbc/IP/UA reales del browser → mejora atribución del Lead original
+      // por coincidencia de identidad (mismo teléfono/external_id → Meta los une internamente).
+      meta.enviarViewContent({
+        telefono:   informe.telefono,
+        nombre:     informe.nombre,
+        ahorro:     informe.ahorro_anual,
+        ctwaClid:   informe.usuarios?.ctwa_clid || null,
+        externalId: informe.usuario_id,
+        eventId:    `view_${short_id}`,
+        fbp:        fbp || null,
+        fbc:        fbc || null,
+        clientIp:   ip  || null,
+        clientUa:   ua  || null,
+      }).catch(() => {});
+      console.log(`[Tracking] ViewContent fired → view_${short_id} | fbp=${!!fbp} fbc=${!!fbc} ip=${!!ip}`);
+    }
   } catch(e) { console.error('[Tracking] Error:', e.message); }
 });
 
